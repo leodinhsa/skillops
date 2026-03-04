@@ -45,6 +45,7 @@ brews:
     repository:
       owner: leodinhsa
       name: homebrew-skillops
+      branch: main
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/leodinhsa/skillops"
     description: "Lightweight Go CLI to manage AI agent skills using symlinks"
