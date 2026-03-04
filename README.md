@@ -11,6 +11,22 @@ Skill Ops is a lightweight, high-performance Go CLI utility designed to manage A
 - **Safety First**: Protected against accidental recursive deletions and invalid path configurations.
 - **Flexible Config**: Consolidated configuration in `~/.skillops/config/agentics.yaml`.
 
+## 📦 Installation
+
+### Homebrew (macOS & Linux)
+
+```bash
+brew tap leodinhsa/skillops
+brew install skillops
+```
+
+### Manual (from source)
+
+```bash
+go build -o skillops main.go
+mv skillops /usr/local/bin/
+```
+
 ## 📁 Command Reference
 
 ### Project Configuration

@@ -1,0 +1,60 @@
+version: 2
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    # this name template makes the OS and Arch compatible with what users expect
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    # use zip for windows archives
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+
+brews:
+  - name: skillops
+    tap:
+      owner: leodinhsa
+      name: homebrew-skillops
+    homepage: "https://github.com/leodinhsa/skillops"
+    description: "Lightweight Go CLI to manage AI agent skills using symlinks"
+    license: "MIT"
+    test: |
+      system "#{bin}/skillops --help"
+    install: |
+      bin.install "skillops"
+    caveats: |
+      🚀 skillops installed successfully!
+      To get started, try running:
+        skillops --help
+      Or jump right into managing your agentic IDEs:
+        skillops agentic
