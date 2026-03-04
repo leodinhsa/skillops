@@ -42,7 +42,7 @@ changelog:
 
 brews:
   - name: skillops
-    tap:
+    repository:
       owner: leodinhsa
       name: homebrew-skillops
     homepage: "https://github.com/leodinhsa/skillops"
