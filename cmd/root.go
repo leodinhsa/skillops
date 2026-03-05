@@ -29,6 +29,9 @@ var (
 			Foreground(pink).
 			Bold(true)
 
+	helpGroupCmdStyle = lipgloss.NewStyle().
+				Foreground(pink)
+
 	helpCmdStyle = lipgloss.NewStyle().
 			Foreground(teal).
 			Bold(true)
@@ -45,9 +48,10 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "skillops",
-	Short: "Skill Ops - Manage AI agent skills",
-	Long:  `A CLI tool to pull skill repositories and manage symlinks for Agentic AI projects.`,
+	Use:     "skillops",
+	Version: config.Version,
+	Short:   "Skill Ops - Manage AI agent skills",
+	Long:    `A CLI tool to pull skill repositories and manage symlinks for Agentic AI projects.`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// Ensure config exists
 		if err := config.EnsureConfig(); err != nil {
@@ -62,6 +66,7 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddGroup(&cobra.Group{ID: "project", Title: "Project Configuration"})
+	rootCmd.AddGroup(&cobra.Group{ID: "skill", Title: "Skill Configuration"})
 	rootCmd.AddGroup(&cobra.Group{ID: "agentic", Title: "Agentic Configuration"})
 
 	// Custom Help Template
@@ -80,6 +85,9 @@ func init() {
 	cobra.AddTemplateFunc("styleTitle", func(s string) string {
 		return helpTitleStyle.Render(s)
 	})
+	cobra.AddTemplateFunc("styleGroupCmd", func(s string) string {
+		return helpGroupCmdStyle.Render(s)
+	})
 
 	rootCmd.SetHelpTemplate(fmt.Sprintf(`
 %s
@@ -95,8 +103,10 @@ func init() {
 {{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}
 
 {{if .HasAvailableSubCommands}}{{styleHeader "Available Commands:"}}{{range .Groups}}
-  {{$group := .}}{{styleTitle .Title}}{{range $.Commands}}{{if eq .GroupID $group.ID}}
+
+  {{$group := .}}{{styleGroupCmd .Title}}{{range $.Commands}}{{if eq .GroupID $group.ID}}
     {{styleCmd (rpad .Name .NamePadding)}} {{styleDesc .Short}}{{end}}{{end}}{{end}}
+
 
   {{if .HasAvailableSubCommands}}{{range .Commands}}{{if not .GroupID}}
     {{styleCmd (rpad .Name .NamePadding)}} {{styleDesc .Short}}{{end}}{{end}}{{end}}{{end}}

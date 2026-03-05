@@ -11,8 +11,9 @@ import (
 )
 
 var configCmd = &cobra.Command{
-	Use:   "config",
-	Short: "Manage global Agentic IDE configurations",
+	Use:     "config",
+	GroupID: "agentic",
+	Short:   "Manage global Agentic IDE configurations",
 }
 
 var addAgenticCmd = &cobra.Command{
