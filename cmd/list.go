@@ -9,8 +9,9 @@ import (
 )
 
 var listCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all downloaded skills",
+	Use:     "list",
+	Short:   "List all downloaded skills",
+	GroupID: "skill",
 	Run: func(cmd *cobra.Command, args []string) {
 		if err := tui.ShowList(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)

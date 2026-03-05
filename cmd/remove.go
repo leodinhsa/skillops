@@ -12,13 +12,23 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	removeSkillName string
+)
+
 var removeCmd = &cobra.Command{
-	Use:     "remove <skill_name>",
+	Use:     "remove",
 	Short:   "Remove a skill from the global skills directory",
-	GroupID: "agentic",
-	Args:    cobra.ExactArgs(1),
+	GroupID: "skill",
+	Args:    cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		skillName := args[0]
+		if removeSkillName == "" {
+			fmt.Fprintf(os.Stderr, "Error: --skill flag is required\n")
+			cmd.Usage()
+			os.Exit(1)
+		}
+
+		skillName := removeSkillName
 		if err := utils.ValidateName(skillName); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -72,7 +82,7 @@ var removeCmd = &cobra.Command{
 var removeAllCmd = &cobra.Command{
 	Use:     "remove-all",
 	Short:   "Remove all skills from the global skills directory",
-	GroupID: "agentic",
+	GroupID: "skill",
 	Run: func(cmd *cobra.Command, args []string) {
 		if !tui.AskConfirm("Are you sure you want to remove ALL skills?", "This action cannot be undone.") {
 			fmt.Println("Aborted.")
@@ -96,6 +106,7 @@ var removeAllCmd = &cobra.Command{
 }
 
 func init() {
+	removeCmd.Flags().StringVarP(&removeSkillName, "skill", "s", "", "Name of the skill to remove (required)")
 	rootCmd.AddCommand(removeCmd)
 	rootCmd.AddCommand(removeAllCmd)
 }
