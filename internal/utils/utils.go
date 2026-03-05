@@ -47,3 +47,26 @@ func IsAgenticEnabled(name string) (bool, string, error) {
 	}
 	return info.IsDir(), rootSubDir, nil
 }
+
+// CopyDir copies a directory recursively from src to dst
+func CopyDir(src string, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		// File
+		buf, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, buf, info.Mode())
+	})
+}

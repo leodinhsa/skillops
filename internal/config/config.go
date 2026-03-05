@@ -19,6 +19,7 @@ var (
 	ConfigDir   string
 	SkillsDir   string
 	ConfigPath  string // ~/.skillops/config/agentics.yaml
+	Version     = "v0.2.0-dev"
 )
 
 func init() {
@@ -46,9 +47,43 @@ type Config struct {
 }
 
 var defaultAgentics = map[string]string{
-	"claude":      ".claude/skills",
-	"antigravity": ".agents/skills",
-	"opencode":    ".opencode/skills",
+	"universal":      ".agents/skills",
+	"antigravity":    ".agent/skills",
+	"augment":        ".augment/skills",
+	"claude-code":    ".claude/skills",
+	"openclaw":       "skills",
+	"cline":          ".agents/skills",
+	"codebuddy":      ".codebuddy/skills",
+	"codex":          ".agents/skills",
+	"command-code":   ".commandcode/skills",
+	"continue":       ".continue/skills",
+	"cortex":         ".cortex/skills",
+	"crush":          ".crush/skills",
+	"cursor":         ".agents/skills",
+	"droid":          ".factory/skills",
+	"gemini-cli":     ".agents/skills",
+	"github-copilot": ".agents/skills",
+	"goose":          ".goose/skills",
+	"junie":          ".junie/skills",
+	"iflow-cli":      ".iflow/skills",
+	"kilo":           ".kilocode/skills",
+	"kiro-cli":       ".kiro/skills",
+	"kode":           ".kode/skills",
+	"mcpjam":         ".mcpjam/skills",
+	"mistral-vibe":   ".vibe/skills",
+	"mux":            ".mux/skills",
+	"opencode":       ".agents/skills",
+	"openhands":      ".openhands/skills",
+	"pi":             ".pi/skills",
+	"qoder":          ".qoder/skills",
+	"qwen-code":      ".qwen/skills",
+	"roo":            ".roo/skills",
+	"trae":           ".trae/skills",
+	"windsurf":       ".windsurf/skills",
+	"zencoder":       ".zencoder/skills",
+	"neovate":        ".neovate/skills",
+	"pochi":          ".pochi/skills",
+	"adal":           ".adal/skills",
 }
 
 func EnsureConfig() error {
@@ -62,16 +97,23 @@ func EnsureConfig() error {
 		return fmt.Errorf("failed to create skills directory: %w", err)
 	}
 
-	// Ensure config
-	if _, err := os.Stat(ConfigPath); os.IsNotExist(err) {
-		cfg := Config{
-			Agentics: make(map[string]string),
-		}
-		for k, v := range defaultAgentics {
+	cfg, err := ReadConfig()
+	if err != nil {
+		// If file doesn't exist, start fresh
+		cfg = Config{Agentics: make(map[string]string)}
+	}
+
+	changed := false
+	for k, v := range defaultAgentics {
+		if _, ok := cfg.Agentics[k]; !ok {
 			cfg.Agentics[k] = v
+			changed = true
 		}
+	}
+
+	if changed {
 		if err := WriteConfig(cfg); err != nil {
-			return fmt.Errorf("failed to write default config: %w", err)
+			return fmt.Errorf("failed to update config with new defaults: %w", err)
 		}
 	}
 	return nil

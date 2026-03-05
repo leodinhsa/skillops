@@ -8,7 +8,7 @@ class Skillops < Formula
   depends_on "go" => :build
 
   def install
-    system "go", "build", *std_go_args(ldflags: "-s -w"), "main.go"
+    system "go", "build", "-ldflags", "-X skillops/internal/config.Version=v#{version}", "-o", bin/"skillops", "main.go"
   end
 
   test do
