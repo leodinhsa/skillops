@@ -23,12 +23,14 @@ type model struct {
 	selected      map[int]bool
 	agentPath     string
 	enabledSkills map[string]bool
+	filtered      []skills.Skill
 	cursor        int
 	quitting      bool
 	height        int // Number of visible items
 	agentName     string
 	editingPath   bool
 	pathInput     textinput.Model
+	filterInput   textinput.Model
 	confirming    bool
 	confirmCursor int
 }
@@ -50,6 +52,14 @@ func New(agentName string) (*model, error) {
 		return nil, fmt.Errorf("no skills discovered. Please pull a skill first using 'skillops pull'")
 	}
 
+	// Sort by repo name for grouping
+	sort.Slice(allSkills, func(i, j int) bool {
+		if allSkills[i].RepoName != allSkills[j].RepoName {
+			return allSkills[i].RepoName < allSkills[j].RepoName
+		}
+		return allSkills[i].Name < allSkills[j].Name
+	})
+
 	// Get enabled skills in agent path
 	enabled, err := symlink.GetEnabledSkills(agentPath)
 	if err != nil {
@@ -69,8 +79,13 @@ func New(agentName string) (*model, error) {
 	ti.Placeholder = "Enter new path (e.g. .claude/skills)"
 	ti.SetValue(agentPath)
 
+	fi := textinput.New()
+	fi.Placeholder = "Search skills..."
+	fi.Focus()
+
 	return &model{
 		skills:        allSkills,
+		filtered:      allSkills,
 		selected:      selected,
 		agentPath:     agentPath,
 		agentName:     agentName,
@@ -78,7 +93,29 @@ func New(agentName string) (*model, error) {
 		cursor:        0,
 		height:        15,
 		pathInput:     ti,
+		filterInput:   fi,
 	}, nil
+}
+
+func (m *model) filter(term string) {
+	if term == "" {
+		m.filtered = m.skills
+		return
+	}
+	var filtered []skills.Skill
+	term = strings.ToLower(term)
+	for _, s := range m.skills {
+		if strings.Contains(strings.ToLower(s.Name), term) || strings.Contains(strings.ToLower(s.RepoName), term) {
+			filtered = append(filtered, s)
+		}
+	}
+	m.filtered = filtered
+	if m.cursor >= len(m.filtered) {
+		m.cursor = 0
+		if len(m.filtered) > 0 {
+			m.cursor = len(m.filtered) - 1
+		}
+	}
 }
 
 func (m *model) Init() tea.Cmd {
@@ -149,28 +186,50 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c", "esc":
 			m.quitting = true
 			return m, tea.Quit
-		case "up":
+		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
 			}
-		case "down":
-			if m.cursor < len(m.skills)-1 {
+		case "down", "j":
+			if m.cursor < len(m.filtered)-1 {
 				m.cursor++
 			}
-		case " ":
-			// Check bounds before accessing
-			if m.cursor >= 0 && m.cursor < len(m.skills) {
-				m.selected[m.cursor] = !m.selected[m.cursor]
+		case "tab":
+			if len(m.filtered) > 0 {
+				currentRepo := m.filtered[m.cursor].RepoName
+				found := false
+				for i := m.cursor + 1; i < len(m.filtered); i++ {
+					if m.filtered[i].RepoName != currentRepo {
+						m.cursor = i
+						found = true
+						break
+					}
+				}
+				if !found {
+					m.cursor = 0
+				}
 			}
-		case "p":
+			return m, nil
+		case " ":
+			if m.cursor >= 0 && m.cursor < len(m.filtered) {
+				skill := m.filtered[m.cursor]
+				// Find original index
+				for i, s := range m.skills {
+					if s.Path == skill.Path {
+						m.selected[i] = !m.selected[i]
+						break
+					}
+				}
+			}
+			return m, nil
+		case "ctrl+p":
 			m.editingPath = true
 			m.pathInput.Focus()
 			return m, textinput.Blink
 		case "enter":
-			// Intercept for confirmation
 			added, removed := m.getChanges()
 			if len(added) == 0 && len(removed) == 0 {
 				m.quitting = true
@@ -181,7 +240,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	return m, nil
+
+	var cmd tea.Cmd
+	oldValue := m.filterInput.Value()
+	m.filterInput, cmd = m.filterInput.Update(msg)
+	if m.filterInput.Value() != oldValue {
+		m.filter(m.filterInput.Value())
+	}
+
+	return m, cmd
 }
 
 func (m *model) getChanges() (added []string, removed []string) {
@@ -268,19 +335,20 @@ func (m *model) View() string {
 		content = TitleStyle.Render("Skill Management") + "\n\n"
 		content += HeaderStyle.Render(fmt.Sprintf("Agentic: %s", m.agentName)) + "\n"
 		content += InfoStyle.Render(fmt.Sprintf("Path: %s", m.agentPath)) + "\n\n"
+		content += m.filterInput.View() + "\n\n"
 
 		// Calculate scrolling window
 		start := 0
-		end := len(m.skills)
+		end := len(m.filtered)
 
-		if len(m.skills) > m.height {
+		if len(m.filtered) > m.height {
 			start = m.cursor - (m.height / 2)
 			if start < 0 {
 				start = 0
 			}
 			end = start + m.height
-			if end > len(m.skills) {
-				end = len(m.skills)
+			if end > len(m.filtered) {
+				end = len(m.filtered)
 				start = end - m.height
 			}
 		}
@@ -289,11 +357,28 @@ func (m *model) View() string {
 			content += DimStyle.Render("   ... scroll up") + "\n"
 		}
 
+		lastRepo := ""
 		for i := start; i < end; i++ {
-			skill := m.skills[i]
-			checkbox := "○"
-			if m.selected[i] {
-				checkbox = "◉"
+			skill := m.filtered[i]
+
+			// Grouping header
+			if skill.RepoName != lastRepo {
+				content += "\n" + HeaderStyle.Render("📦 "+skill.RepoName) + "\n"
+				lastRepo = skill.RepoName
+			}
+
+			// Find selection status from original index
+			isSelected := false
+			for origIdx, s := range m.skills {
+				if s.Path == skill.Path {
+					isSelected = m.selected[origIdx]
+					break
+				}
+			}
+
+			checkbox := CheckboxStyle.Render("○")
+			if isSelected {
+				checkbox = CheckboxStyle.Render("◉")
 			}
 
 			cursor := "  "
@@ -303,15 +388,17 @@ func (m *model) View() string {
 				style = SelectedStyle
 			}
 
-			line := fmt.Sprintf("%s%s %s", cursor, CheckboxStyle.Render(checkbox), style.Render(skill.Name))
+			line := fmt.Sprintf("%s%s %s", cursor, checkbox, style.Render(skills.GetSkillName(skill)))
 			content += line + "\n"
 		}
 
-		if end < len(m.skills) {
+		if end < len(m.filtered) {
 			content += DimStyle.Render("   ... scroll down") + "\n"
+		} else {
+			content += "\n" // Placeholder for scroll down
 		}
 
-		content += HelpStyle.Render("\n space: toggle • p: change path • enter: apply • q: quit")
+		content += HelpStyle.Render("\n arrows: navigate • space: toggle • tab: jump repo • ctrl+p: path • enter: apply • esc: quit")
 	}
 
 	return BorderStyle.Render(content) + "\n"
@@ -335,13 +422,16 @@ func Run(agentName string) error {
 // --- Agentic Checklist TUI ---
 
 type checklistModel struct {
-	agentNames []string
-	agentPaths map[string]string
-	checked    map[int]bool
-	cursor     int
-	quitting   bool
-	err        error
-	applied    []string // List of changes made for summary
+	agentNames    []string
+	filteredNames []string
+	agentPaths    map[string]string
+	checked       map[int]bool
+	cursor        int
+	quitting      bool
+	err           error
+	applied       []string // List of changes made for summary
+	filterInput   textinput.Model
+	height        int // Number of visible items
 }
 
 func NewChecklistModel() (*checklistModel, error) {
@@ -374,22 +464,50 @@ func NewChecklistModel() (*checklistModel, error) {
 		}
 	}
 
+	ti := textinput.New()
+	ti.Placeholder = "Type to filter agents..."
+	ti.Focus()
+
 	return &checklistModel{
-		agentNames: names,
-		agentPaths: agentics,
-		checked:    checked,
+		agentNames:    names,
+		filteredNames: names,
+		agentPaths:    agentics,
+		checked:       checked,
+		filterInput:   ti,
+		height:        12,
 	}, nil
 }
 
 func (m *checklistModel) Init() tea.Cmd {
-	return nil
+	return textinput.Blink
+}
+
+func (m *checklistModel) filter(term string) {
+	if term == "" {
+		m.filteredNames = m.agentNames
+		return
+	}
+	var filtered []string
+	term = strings.ToLower(term)
+	for _, name := range m.agentNames {
+		if strings.Contains(strings.ToLower(name), term) {
+			filtered = append(filtered, name)
+		}
+	}
+	m.filteredNames = filtered
+	if m.cursor >= len(m.filteredNames) {
+		m.cursor = 0
+		if len(m.filteredNames) > 0 {
+			m.cursor = len(m.filteredNames) - 1
+		}
+	}
 }
 
 func (m *checklistModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c", "esc":
 			m.quitting = true
 			return m, tea.Quit
 		case "up":
@@ -397,11 +515,21 @@ func (m *checklistModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor--
 			}
 		case "down":
-			if m.cursor < len(m.agentNames)-1 {
+			if m.cursor < len(m.filteredNames)-1 {
 				m.cursor++
 			}
 		case " ":
-			m.checked[m.cursor] = !m.checked[m.cursor]
+			if len(m.filteredNames) > 0 {
+				name := m.filteredNames[m.cursor]
+				// Find original index
+				for i, n := range m.agentNames {
+					if n == name {
+						m.checked[i] = !m.checked[i]
+						break
+					}
+				}
+			}
+			return m, nil
 		case "enter":
 			if err := m.applyChanges(); err != nil {
 				m.err = err
@@ -411,7 +539,15 @@ func (m *checklistModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	}
-	return m, nil
+
+	var cmd tea.Cmd
+	oldValue := m.filterInput.Value()
+	m.filterInput, cmd = m.filterInput.Update(msg)
+	if m.filterInput.Value() != oldValue {
+		m.filter(m.filterInput.Value())
+	}
+
+	return m, cmd
 }
 
 func (m *checklistModel) applyChanges() error {
@@ -504,25 +640,66 @@ func (m *checklistModel) View() string {
 
 	var content string
 	content = TitleStyle.Render("Project Agentics") + "\n\n"
-	content += InfoStyle.Render("Select agentic environments to enable in this project:") + "\n\n"
+	content += InfoStyle.Render("Select agentic environments to enable in this project:") + "\n"
+	content += m.filterInput.View() + "\n\n"
 
-	for i, name := range m.agentNames {
-		checkbox := "○"
-		if m.checked[i] {
-			checkbox = "◉"
+	if len(m.filteredNames) == 0 {
+		content += DimStyle.Render("  No agents matching filter") + "\n"
+	} else {
+		// Calculate scrolling
+		start := 0
+		end := len(m.filteredNames)
+
+		if len(m.filteredNames) > m.height {
+			start = m.cursor - (m.height / 2)
+			if start < 0 {
+				start = 0
+			}
+			end = start + m.height
+			if end > len(m.filteredNames) {
+				end = len(m.filteredNames)
+				start = end - m.height
+			}
 		}
 
-		cursor := "  "
-		style := NormalStyle
-		if i == m.cursor {
-			cursor = "> "
-			style = SelectedStyle
+		if start > 0 {
+			content += DimStyle.Render("   ... scroll up") + "\n"
 		}
 
-		content += fmt.Sprintf("%s%s %s\n", cursor, CheckboxStyle.Render(checkbox), style.Render(name))
+		for i := start; i < end; i++ {
+			name := m.filteredNames[i]
+			// Find original index for status
+			origIdx := -1
+			for j, n := range m.agentNames {
+				if n == name {
+					origIdx = j
+					break
+				}
+			}
+
+			checkbox := "○"
+			if m.checked[origIdx] {
+				checkbox = "◉"
+			}
+
+			cursor := "  "
+			style := NormalStyle
+			if i == m.cursor {
+				cursor = "> "
+				style = SelectedStyle
+			}
+
+			content += fmt.Sprintf("%s%s %s\n", cursor, CheckboxStyle.Render(checkbox), style.Render(name))
+		}
+
+		if end < len(m.filteredNames) {
+			content += DimStyle.Render("   ... scroll down") + "\n"
+		} else {
+			content += "\n"
+		}
 	}
 
-	content += HelpStyle.Render("\n arrows: navigate • space: toggle • enter: save • q: quit")
+	content += HelpStyle.Render("\n arrows: navigate • space: toggle • enter: save • esc: quit")
 
 	return BorderStyle.Render(content) + "\n"
 }

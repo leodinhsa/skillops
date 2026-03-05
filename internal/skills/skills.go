@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -102,4 +103,27 @@ func GetSkillName(skill Skill) string {
 		return parts[1]
 	}
 	return skill.Name
+}
+
+type RepoMetadata struct {
+	URL       string `json:"url"`
+	SkillName string `json:"skill_name,omitempty"`
+}
+
+func SaveMetadata(repoPath string, meta RepoMetadata) error {
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(repoPath, "metadata.json"), data, 0644)
+}
+
+func LoadMetadata(repoPath string) (RepoMetadata, error) {
+	data, err := os.ReadFile(filepath.Join(repoPath, "metadata.json"))
+	if err != nil {
+		return RepoMetadata{}, err
+	}
+	var meta RepoMetadata
+	err = json.Unmarshal(data, &meta)
+	return meta, err
 }

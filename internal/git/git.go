@@ -72,6 +72,14 @@ func Clone(repoURL, destDir string) error {
 }
 
 func ExtractRepoName(repoURL string) string {
+	parts := strings.Split(ExtractFullRepoPath(repoURL), "/")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return ""
+}
+
+func ExtractFullRepoPath(repoURL string) string {
 	// Handle SSH URLs: git@github.com:user/repo.git
 	if strings.HasPrefix(repoURL, "git@") {
 		// Remove git@ prefix
@@ -79,11 +87,7 @@ func ExtractRepoName(repoURL string) string {
 		if len(parts) >= 2 {
 			repoPath := parts[1]
 			// Remove .git suffix
-			repoPath = strings.TrimSuffix(repoPath, ".git")
-			parts = strings.Split(repoPath, "/")
-			if len(parts) > 0 {
-				return parts[len(parts)-1]
-			}
+			return strings.TrimSuffix(repoPath, ".git")
 		}
 	}
 
@@ -91,17 +95,15 @@ func ExtractRepoName(repoURL string) string {
 	// Remove protocol
 	url := strings.TrimPrefix(repoURL, "https://")
 	url = strings.TrimPrefix(url, "http://")
-	url = strings.TrimPrefix(url, "github.com/")
+
+	// Remove domain part (first part before /)
+	parts := strings.Split(url, "/")
+	if len(parts) > 1 {
+		url = strings.Join(parts[1:], "/")
+	}
 
 	// Remove .git suffix
-	url = strings.TrimSuffix(url, ".git")
-
-	// Get the last part (repo name)
-	parts := strings.Split(url, "/")
-	if len(parts) > 0 {
-		return parts[len(parts)-1]
-	}
-	return ""
+	return strings.TrimSuffix(url, ".git")
 }
 
 func NormalizeRepoURL(repoURL string) string {
