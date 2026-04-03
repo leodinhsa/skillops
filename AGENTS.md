@@ -1,71 +1,178 @@
 # SkillOps: Project Memory & Development Guidelines
 
-This document serves as the primary knowledge base for the `skillops` project. It captures the project's architecture, design philosophy, and critical development rules to ensure consistency and prevent regressions in future development cycles.
+This document is the primary knowledge base for the `skillops` project. It captures architecture, design philosophy, and critical development rules to ensure consistency and prevent regressions.
 
 ---
 
-## 🎯 Project Overview
-`skillops` is a CLI tool designed to manage "skills" (modular AI capabilities/scripts) for various Agentic IDEs (like Claude Desktop, Windsurf, Roo Code, etc.).
-- **Core Problem**: Each IDE has its own skill/tool directory. Syncing a shared repository of skills across these IDEs manually is tedious and error-prone.
-- **Solution**: A central `skills` directory (global) and a symbolic linking system that maps specific skills to the correct locations for each IDE.
+## Project Overview
+
+`skillops` is a CLI tool for managing AI agent "skills" (modular capabilities/scripts) across multiple Agentic IDEs (Claude Code, Cursor, Windsurf, Kiro, etc.).
+
+- **Core problem**: Each IDE stores skills in a different directory. Syncing a shared skill repo across IDEs manually is tedious and error-prone.
+- **Solution**: A central global store (`~/.skillops/skills/`) holds all pulled skill repos. Symlinks map individual skills into the correct IDE-specific paths within a project. A local `.skillops/config.json` tracks which IDEs and skills are active per project.
 
 ---
 
-## 🏗️ Technical Architecture
+## Architecture
 
-### 1. Directory Structure
-- `cmd/`: CLI entry points using `cobra`.
-- `internal/config/`: Manages global configuration (`~/.skillops/config.json`) and project-specific activation.
-- `internal/skills/`: Handles skill discovery from the global skills directory.
-- `internal/symlink/`: Core logic for creating/removing symlinks and detecting existing links.
-- `internal/tui/`: High-fidelity terminal interfaces using `bubbletea` and `lipgloss`.
+### Directory layout
 
-### 2. Global vs. Local State
-- **Global Config**: Stores mappings of "Agentic IDE Name" to "Relative Path to Skills Folder".
-- **Local Project**: A `.skillops/` directory or specific local markers (defined by paths in global config) determine if an agentic environment is "active" for the current workspace.
+```
+~/.skillops/
+  config/
+    agentics.yaml      ← global IDE registry (name → relative path)
+    settings.yaml      ← registry sources for auto-pull
+  skills/
+    <repo-name>/
+      <skill-name>/
+        SKILL.md       ← presence of this file marks a valid skill
+
+<project>/
+  .skillops/
+    config.json        ← local project config (source of truth, commit to git)
+  .<ide>/
+    skills/
+      <skill-name> → ~/.skillops/skills/<repo>/<skill>   (symlink)
+```
+
+### Source files
+
+```
+cmd/                   ← Cobra commands (one file per command)
+  root.go              ← root command, PersistentPreRun config init, custom help
+  init.go              ← skillops init
+  add.go               ← skillops add
+  remove.go            ← skillops remove
+  status.go            ← skillops status
+  sync.go              ← skillops sync
+  pull.go              ← skillops pull
+  list.go              ← skillops list
+  update.go            ← skillops update
+  config.go            ← skillops config subcommands
+  version.go           ← skillops version
+
+internal/
+  config/
+    config.go          ← global config R/W, defaultAgentics, EnsureConfig, migration
+    localconfig.go     ← local project config R/W (.skillops/config.json)
+    settings.go        ← registry settings R/W (settings.yaml)
+  git/
+    git.go             ← Clone, pull, URL normalization
+  skills/
+    skills.go          ← skill discovery (SKILL.md detection), metadata R/W
+    extract.go         ← PullSkillFromURL (shared by pull --skill and sync auto-pull)
+  symlink/
+    symlink.go         ← create/remove/check symlinks, find linked agentics
+  tui/
+    styles.go          ← shared lipgloss styles and color palette
+    tui.go             ← main interactive TUI (init checklist, checklistModel)
+    add.go             ← add TUI (skill select → tool select → confirm)
+    remove.go          ← remove TUI (skill select → tool select → confirm)
+    list.go            ← list TUI view
+    init.go            ← init TUI entry point
+  utils/
+    utils.go           ← shared helpers (ValidateName, CopyDir, etc.)
+```
+
+### Data flow
+
+```
+Global store (~/.skillops/skills/)
+  └── pulled by: skillops pull
+
+Local config (.skillops/config.json)           ← source of truth
+  └── managed by: init / add / remove
+
+Project symlinks (derived state)
+  └── created by: add / sync
+  └── removed by: remove / init (deselect)
+```
+
+### Local config schema
+
+```json
+{
+  "version": "1",
+  "tools": {
+    "claude-code": ["repo-a/auth-agent", "repo-a/logging-agent"],
+    "kiro": ["repo-a/auth-agent"]
+  }
+}
+```
+
+Skills are stored as `"repo/skill"` full identity. The short name (symlink filename) is derived at runtime as the portion after `/`.
 
 ---
 
-## 🎨 TUI Design System (The "Rich TUI" Rulebook)
-All new commands MUST follow these visual and interaction patterns defined in `internal/tui/styles.go`.
+## TUI Design System
 
-### 1. Color Palette
-- **Primary (Pink)**: `#F92672` (Titles, focus accents).
-- **Secondary (Purple)**: `#AE81FF` (Borders, selection backgrounds).
-- **Success (Green)**: `#A6E22E` (Emojis, success text).
-- **Muted (Dimmed)**: `#6272A4` (Help text, secondary info).
+All TUIs follow the bubbletea `Model` interface (`Init`, `Update`, `View`) and use styles from `internal/tui/styles.go`.
 
-### 2. Component Standards
-- **Titles**: Centered title bar with `TitleStyle`.
-- **Borders**: All main TUIs must be wrapped in `BorderStyle`.
-- **Cursors**: Use `>` for navigation. Selected items in menus should have a Purple background with White text.
+### Color palette
 
-### 3. Clean Exit Rule (CRITICAL)
-To avoid residual "ghost" borders in the terminal:
-- **State**: TUI models must have a `quitting` boolean flag.
-- **Update**: Set `m.quitting = true` before returning `tea.Quit`.
-- **View**: If `m.quitting` is true, return an **empty string** `""`. 
-- **Feedback**: Print final success messages or summaries using `fmt.Println` *after* the `p.Run()` call returns in the command's entry point.
+| Role | Hex | Usage |
+|---|---|---|
+| Primary (Pink) | `#F92672` | Titles, focus accents |
+| Secondary (Purple) | `#AE81FF` | Borders, selection backgrounds |
+| Success (Green) | `#A6E22E` | Success text, emojis |
+| Muted | `#6272A4` | Help text, secondary info |
 
----
+### Clean exit rule (critical)
 
-## 🛠️ Interaction Patterns
+To avoid ghost borders in the terminal:
 
-### 1. The "Confirmation First" Rule
-Any destructive action (deleting skills) or bulk sync (applying checklist changes) MUST be preceded by a confirmation TUI (`confirmModel`).
-- **Checklists**: When managing multiple items, the `Enter` key should trigger a summary screen showing what will be added (`+`) and removed (`-`).
-
-### 2. Path Safety
-- Never perform `os.RemoveAll` on root directories (`/`, `~`, or the current working directory).
-- Always validate that a path is "within" a managed agentic directory before unlinking/deleting.
+1. TUI models must have a `quitting bool` field.
+2. Set `m.quitting = true` before returning `tea.Quit`.
+3. In `View()`, return `""` if `m.quitting` is true.
+4. Print final output via `fmt.Println` *after* `p.Run()` returns in the command entry point.
 
 ---
 
-## 🚀 Future Roadmap & Consistency
-- **New Agentics**: To add a new IDE, update `internal/config/default_agentics.go` (if any) or use `skillops config add-agentic`.
-- **Skill Naming**: Support both short names (e.g., `logger`) and repo-prefixed names (e.g., `brand/logger`) for discovery and symlinking.
-- **Autocompletion**: Ensure `agentic manage <name>` only suggests agentics active in the current project root.
+## Interaction patterns
+
+### Confirmation first
+
+Any destructive or bulk action must show a confirm screen before applying:
+- Checklist changes in `init` → summary of `+` added / `-` removed tools
+- `remove` → summary of symlinks to be deleted
+
+### Path safety
+
+- Never `os.RemoveAll` on root directories (`/`, `~`, cwd).
+- Always validate paths are within `<cwd>/<toolRootDir>/skills/` before any removal.
+- Always validate names with `utils.ValidateName` before constructing file paths.
+
+### Missing local config message
+
+When `.skillops/config.json` is not found, commands (`add`, `remove`, `status`, `sync`) print:
+
+```
+No local config found.
+
+If you're upgrading from v1, run:
+  skillops init   — declare which IDEs this project uses
+  skillops sync   — restore your skill links
+```
 
 ---
 
-*Last Updated: 2026-03-04*
+## Config versioning & migration
+
+`config_version` field in `agentics.yaml` tracks breaking changes to the default IDE list.
+
+- **v1 → v2**: default list trimmed from 35+ to 9 IDEs. `EnsureConfig()` detects `config_version < 2`, prunes legacy entries from `legacyAgentics`, adds new defaults, bumps version to `2`.
+- `EnsureConfig()` only adds missing keys — never removes user-added entries.
+
+---
+
+## Conventions
+
+- Each `cmd/` file registers itself via `init()` calling `rootCmd.AddCommand(...)`.
+- Commands are grouped with `GroupID`: `"project"` or `"skill"`.
+- Skill identity format: `repo_name/skill_name` (e.g. `my-repo/logger`).
+- A skill is valid only if it contains a `SKILL.md` file.
+- Conflict detection: if a symlink short name already exists from a different repo → warn and skip, never silently overwrite.
+
+---
+
+*Last updated: 2026-04-03*

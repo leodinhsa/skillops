@@ -19,7 +19,7 @@ var (
 	ConfigDir   string
 	SkillsDir   string
 	ConfigPath  string // ~/.skillops/config/agentics.yaml
-	Version     = "v0.2.0-dev"
+	Version     = "v1.0.0-dev"
 )
 
 func init() {
@@ -43,47 +43,67 @@ func init() {
 }
 
 type Config struct {
-	Agentics map[string]string `yaml:"agentics"`
+	ConfigVersion int               `yaml:"config_version,omitempty"`
+	Agentics      map[string]string `yaml:"agentics"`
+}
+
+// currentConfigVersion is bumped when the default agentics list changes
+// in a breaking way (e.g. trimming from 35+ to 9 in v2).
+const currentConfigVersion = 2
+
+// legacyAgentics is the set of tool names that were in the pre-v2 default list
+// and should be removed during migration (unless the user explicitly re-adds them).
+var legacyAgentics = map[string]bool{
+	"universal": true, "augment": true, "openclaw": true, "cline": true,
+	"codebuddy": true, "codex": true, "command-code": true, "continue": true,
+	"cortex": true, "crush": true, "droid": true, "junie": true,
+	"iflow-cli": true, "kilo": true, "kiro-cli": true, "kode": true,
+	"mcpjam": true, "mistral-vibe": true, "mux": true, "openhands": true,
+	"pi": true, "qoder": true, "qwen-code": true, "roo": true,
+	"trae": true, "zencoder": true, "neovate": true, "pochi": true,
+	"adal": true, "claude": true, "universal s": true,
 }
 
 var defaultAgentics = map[string]string{
-	"universal":      ".agents/skills",
-	"antigravity":    ".agent/skills",
-	"augment":        ".augment/skills",
 	"claude-code":    ".claude/skills",
-	"openclaw":       "skills",
-	"cline":          ".agents/skills",
-	"codebuddy":      ".codebuddy/skills",
-	"codex":          ".agents/skills",
-	"command-code":   ".commandcode/skills",
-	"continue":       ".continue/skills",
-	"cortex":         ".cortex/skills",
-	"crush":          ".crush/skills",
-	"cursor":         ".agents/skills",
-	"droid":          ".factory/skills",
-	"gemini-cli":     ".agents/skills",
-	"github-copilot": ".agents/skills",
-	"goose":          ".goose/skills",
-	"junie":          ".junie/skills",
-	"iflow-cli":      ".iflow/skills",
-	"kilo":           ".kilocode/skills",
-	"kiro-cli":       ".kiro/skills",
-	"kode":           ".kode/skills",
-	"mcpjam":         ".mcpjam/skills",
-	"mistral-vibe":   ".vibe/skills",
-	"mux":            ".mux/skills",
-	"opencode":       ".agents/skills",
-	"openhands":      ".openhands/skills",
-	"pi":             ".pi/skills",
-	"qoder":          ".qoder/skills",
-	"qwen-code":      ".qwen/skills",
-	"roo":            ".roo/skills",
-	"trae":           ".trae/skills",
+	"cursor":         ".cursor/skills",
 	"windsurf":       ".windsurf/skills",
-	"zencoder":       ".zencoder/skills",
-	"neovate":        ".neovate/skills",
-	"pochi":          ".pochi/skills",
-	"adal":           ".adal/skills",
+	"kiro":           ".kiro/skills",
+	"gemini-cli":     ".gemini/skills",
+	"goose":          ".goose/skills",
+	"github-copilot": ".github/skills",
+	"opencode":       ".agents/skills",
+	"antigravity":    ".agent/skills",
+	// Commented out (not deleted) — re-enable by uncommenting:
+	// "universal":    ".agents/skills",
+	// "augment":      ".augment/skills",
+	// "openclaw":     "skills",
+	// "cline":        ".agents/skills",
+	// "codebuddy":    ".codebuddy/skills",
+	// "codex":        ".agents/skills",
+	// "command-code": ".commandcode/skills",
+	// "continue":     ".continue/skills",
+	// "cortex":       ".cortex/skills",
+	// "crush":        ".crush/skills",
+	// "droid":        ".factory/skills",
+	// "junie":        ".junie/skills",
+	// "iflow-cli":    ".iflow/skills",
+	// "kilo":         ".kilocode/skills",
+	// "kiro-cli":     ".kiro/skills",
+	// "kode":         ".kode/skills",
+	// "mcpjam":       ".mcpjam/skills",
+	// "mistral-vibe": ".vibe/skills",
+	// "mux":          ".mux/skills",
+	// "openhands":    ".openhands/skills",
+	// "pi":           ".pi/skills",
+	// "qoder":        ".qoder/skills",
+	// "qwen-code":    ".qwen/skills",
+	// "roo":          ".roo/skills",
+	// "trae":         ".trae/skills",
+	// "zencoder":     ".zencoder/skills",
+	// "neovate":      ".neovate/skills",
+	// "pochi":        ".pochi/skills",
+	// "adal":         ".adal/skills",
 }
 
 func EnsureConfig() error {
@@ -99,11 +119,32 @@ func EnsureConfig() error {
 
 	cfg, err := ReadConfig()
 	if err != nil {
-		// If file doesn't exist, start fresh
-		cfg = Config{Agentics: make(map[string]string)}
+		// File doesn't exist — start fresh at current version
+		cfg = Config{
+			ConfigVersion: currentConfigVersion,
+			Agentics:      make(map[string]string),
+		}
 	}
 
 	changed := false
+
+	// Migration: if config is from before v2, prune legacy default entries
+	if cfg.ConfigVersion < currentConfigVersion {
+		for name := range legacyAgentics {
+			if _, ok := cfg.Agentics[name]; ok {
+				delete(cfg.Agentics, name)
+				changed = true
+			}
+		}
+		// Also fix any default entries that had wrong paths in v1
+		for k, v := range defaultAgentics {
+			cfg.Agentics[k] = v
+		}
+		cfg.ConfigVersion = currentConfigVersion
+		changed = true
+	}
+
+	// Add any missing default entries
 	for k, v := range defaultAgentics {
 		if _, ok := cfg.Agentics[k]; !ok {
 			cfg.Agentics[k] = v
@@ -116,6 +157,11 @@ func EnsureConfig() error {
 			return fmt.Errorf("failed to update config with new defaults: %w", err)
 		}
 	}
+
+	if err := ensureSettings(); err != nil {
+		return fmt.Errorf("failed to ensure settings: %w", err)
+	}
+
 	return nil
 }
 

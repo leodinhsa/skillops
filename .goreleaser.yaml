@@ -56,7 +56,16 @@ brews:
       bin.install "skillops"
     caveats: |
       🚀 skillops installed successfully!
-      To get started, try running:
-        skillops --help
-      Or jump right into managing your agentic IDEs:
-        skillops agentic
+
+      Quick start:
+        skillops pull <repo-url>   — download a skill repo
+        skillops init              — declare which IDEs this project uses
+        skillops add               — link skills into your IDEs
+        skillops status            — see what's linked
+
+      Upgrading from v1? Run in each project:
+        skillops init
+        skillops sync
+
+      Your skill data lives in ~/.skillops/ and is never removed on uninstall.
+      To fully clean up: rm -rf ~/.skillops/
