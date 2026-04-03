@@ -7,19 +7,20 @@ import (
 	"strings"
 
 	"skillops/internal/config"
+	"skillops/internal/skills"
 	"skillops/internal/tui"
 
 	"github.com/spf13/cobra"
 )
 
 var (
-	removeAllTools bool
-	removeToolFlag string
+	addAllTools  bool
+	addToolFlag  string
 )
 
-var removeCmd = &cobra.Command{
-	Use:     "remove [skill]",
-	Short:   "Unlink a skill from the project's IDE tools",
+var addCmd = &cobra.Command{
+	Use:     "add [skill]",
+	Short:   "Link a skill into the project's active IDE tools",
 	GroupID: "project",
 	Args:    cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -38,54 +39,53 @@ var removeCmd = &cobra.Command{
 		}
 
 		// Non-TUI paths: --all or --tool with a positional skill arg
-		if removeAllTools || removeToolFlag != "" {
+		if addAllTools || addToolFlag != "" {
 			if len(args) == 0 {
 				fmt.Fprintln(os.Stderr, "Error: a skill name is required with --all or --tool")
 				os.Exit(1)
 			}
 			skillArg := args[0]
 
-			// Resolve full identity from local config
-			cfg, err := config.ReadLocalConfig()
+			// Resolve skill from global store
+			allSkills, err := skills.Discover()
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Error discovering skills: %v\n", err)
 				os.Exit(1)
 			}
 
-			// Find matching identity
-			var identity string
-			for _, skillList := range cfg.Tools {
-				for _, id := range skillList {
-					parts := strings.SplitN(id, "/", 2)
-					if id == skillArg || (len(parts) == 2 && parts[1] == skillArg) {
-						identity = id
-						break
-					}
-				}
-				if identity != "" {
-					break
+			// Find matching skill(s) by short name or full identity
+			var matched []struct {
+				identity string
+				path     string
+			}
+			for _, s := range allSkills {
+				shortName := strings.SplitN(s.Name, "/", 2)
+				if s.Name == skillArg || (len(shortName) == 2 && shortName[1] == skillArg) {
+					matched = append(matched, struct {
+						identity string
+						path     string
+					}{s.Name, s.Path})
 				}
 			}
 
-			if identity == "" {
-				fmt.Fprintf(os.Stderr, "Error: skill '%s' not found in local config\n", skillArg)
+			if len(matched) == 0 {
+				fmt.Fprintf(os.Stderr, "Error: skill '%s' not found in global store\n", skillArg)
 				os.Exit(1)
 			}
-
-			parts := strings.SplitN(identity, "/", 2)
-			shortName := parts[1]
 
 			// Determine target tools
 			var targetTools []string
-			if removeAllTools {
+			if addAllTools {
+				var err error
 				targetTools, err = config.GetActiveTools()
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error reading active tools: %v\n", err)
 					os.Exit(1)
 				}
 			} else {
-				for _, t := range strings.Split(removeToolFlag, ",") {
-					targetTools = append(targetTools, strings.TrimSpace(t))
+				targetTools = strings.Split(addToolFlag, ",")
+				for i, t := range targetTools {
+					targetTools[i] = strings.TrimSpace(t)
 				}
 			}
 
@@ -96,19 +96,21 @@ var removeCmd = &cobra.Command{
 			}
 
 			var results []string
-			for _, tool := range targetTools {
-				result, err := tui.UnlinkSkillFromTool(cwd, identity, shortName, tool)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-					continue
-				}
-				if result != "" {
-					results = append(results, result)
+			for _, skill := range matched {
+				for _, tool := range targetTools {
+					result, err := tui.LinkSkillToTool(cwd, skill.identity, skill.path, tool)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+						continue
+					}
+					if result != "" {
+						results = append(results, result)
+					}
 				}
 			}
 
 			if len(results) > 0 {
-				fmt.Println("\n✨ Skills unlinked:")
+				fmt.Println("\n✨ Skills linked:")
 				for _, r := range results {
 					fmt.Println("  " + r)
 				}
@@ -124,7 +126,7 @@ var removeCmd = &cobra.Command{
 			preselected = args[0]
 		}
 
-		if err := tui.RunRemove(preselected); err != nil {
+		if err := tui.RunAdd(preselected); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -132,7 +134,7 @@ var removeCmd = &cobra.Command{
 }
 
 func init() {
-	removeCmd.Flags().BoolVar(&removeAllTools, "all", false, "Unlink from all active tools")
-	removeCmd.Flags().StringVar(&removeToolFlag, "tool", "", "Comma-separated list of tools to unlink from")
-	rootCmd.AddCommand(removeCmd)
+	addCmd.Flags().BoolVar(&addAllTools, "all", false, "Link into all active tools")
+	addCmd.Flags().StringVar(&addToolFlag, "tool", "", "Comma-separated list of tools to target")
+	rootCmd.AddCommand(addCmd)
 }

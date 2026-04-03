@@ -12,7 +12,7 @@ import (
 
 var configCmd = &cobra.Command{
 	Use:     "config",
-	GroupID: "agentic",
+	GroupID: "skill",
 	Short:   "Manage global Agentic IDE configurations",
 }
 

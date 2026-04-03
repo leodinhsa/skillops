@@ -1,17 +1,8 @@
-# 🛠 Skill Ops
+# SkillOps
 
-Skill Ops is a lightweight, high-performance Go CLI utility designed to manage AI agent skills using a **symlink-first** approach. It allows developers to pull skill repositories and selectively enable/disable them for specific Agentic IDEs (Claude, Antigravity, OpenCode, etc.) without file duplication.
+A lightweight CLI to manage AI agent skills across multiple Agentic IDEs using a symlink-first approach. Pull skill repositories once, link them into any IDE — no duplication.
 
-## 🚀 Key Features
-
-- **Symlink Management**: Skills are stored centrally and symlinked to project folders.
-- **Agentic Checklist**: Manage multiple IDE environments simultaneously in your project root via a checklist TUI.
-- **Interactive Skill TUI**: A premium, rich interactive interface for toggling skills and managing IDE paths.
-- **Premium Help Output**: A structured, colored `--help` experience.
-- **Safety First**: Protected against accidental recursive deletions and invalid path configurations.
-- **Flexible Config**: Consolidated configuration in `~/.skillops/config/agentics.yaml`.
-
-## 📦 Installation
+## Installation
 
 ### Homebrew (macOS & Linux)
 
@@ -20,35 +11,130 @@ brew tap leodinhsa/skillops
 brew install skillops
 ```
 
-### Manual (from source)
+To upgrade to the latest version:
 
 ```bash
-go build -o skillops main.go
+brew upgrade skillops
+```
+
+### From source
+
+```bash
+go build -o skillops .
 mv skillops /usr/local/bin/
 ```
 
-## 📁 Command Reference
+## How it works
 
-### Project Configuration
-- **`skillops agentic`**: Open a checklist TUI to enable/disable Agentic IDE environments in your project root.
-- **`skillops agentic manage <name>`**: Interactively manage skills or remove the environment for a specific agentic.
-- **`skillops agentic remove-skill <agent> <skill>`**: Remove a specific skill symlink.
-- **`skillops agentic remove-skills <agent>`**: Remove all skill symlinks for an agentic.
+```
+~/.skillops/skills/          ← global store (pulled repos live here)
+  my-repo/
+    auth-agent/SKILL.md
+    logging-agent/SKILL.md
 
-### Skill Management
-- **`skillops pull <url>`**: Download a new skill repository from GitHub.
-- **`skillops list`**: Show all downloaded skill names and their status.
-- **`skillops remove <name>`**: Safely delete a pulled skill repository (checks for active links).
-- **`skillops remove-all`**: Clear all local skill repositories.
+my-project/
+  .skillops/config.json      ← local project config (commit this)
+  .kiro/skills/
+    auth-agent → ~/.skillops/skills/my-repo/auth-agent   (symlink)
+  .claude/skills/
+    auth-agent → ~/.skillops/skills/my-repo/auth-agent   (symlink)
+```
 
-### Agentic Configuration
-- **`skillops config add-agentic -n <name> -p <path>`**: Register a new IDE type globally.
-- **`skillops config update-agentic -n <name>`**: Update an existing IDE mapping (interactive path).
-- **`skillops config remove-agentic -n <name>`**: Remove a registered IDE mapping.
+## Quick start
 
-## ⚙️ Configuration
+```bash
+# 1. Pull a skill repo into the global store
+skillops pull https://github.com/org/my-skills-repo
 
-- **All Config**: `~/.skillops/config/agentics.yaml`
+# 2. In your project, declare which IDEs to use
+skillops init
+
+# 3. Link skills into the active IDEs
+skillops add
+
+# 4. Check what's linked
+skillops status
+```
+
+## Command reference
+
+### Project commands
+
+| Command | Description |
+|---|---|
+| `skillops init` | Declare which IDE tools are active in this project |
+| `skillops add [skill]` | Link a skill into the project's active IDE tools |
+| `skillops remove [skill]` | Unlink a skill from the project's IDE tools |
+| `skillops status` | Show current skill and IDE state of this project |
+| `skillops sync` | Restore all symlinks declared in the local config |
+
+**`skillops add` flags:**
+- `--all` — link into all active tools
+- `--tool <name>` — comma-separated list of tools to target (e.g. `--tool kiro,cursor`)
+
+**`skillops remove` flags:**
+- `--all` — unlink from all active tools
+- `--tool <name>` — comma-separated list of tools to unlink from
+
+### Skill commands
+
+| Command | Description |
+|---|---|
+| `skillops pull <url>` | Pull a skill repository from GitHub |
+| `skillops pull <url> --skill <name>` | Pull a specific skill from a repository |
+| `skillops list` | List all downloaded skills |
+| `skillops update` | Update all pulled skill repositories |
+| `skillops update --skill <name>` | Update a specific skill |
+| `skillops config add-agentic -n <name> -p <path>` | Register a new IDE type globally |
+| `skillops config update-agentic -n <name> -p <path>` | Update an existing IDE mapping |
+| `skillops config remove-agentic -n <name>` | Remove a registered IDE mapping |
+
+## Supported IDEs (defaults)
+
+| IDE | Skills path |
+|---|---|
+| `claude-code` | `.claude/skills` |
+| `cursor` | `.cursor/skills` |
+| `windsurf` | `.windsurf/skills` |
+| `kiro` | `.kiro/skills` |
+| `gemini-cli` | `.gemini/skills` |
+| `goose` | `.goose/skills` |
+| `github-copilot` | `.github/skills` |
+| `opencode` | `.agents/skills` |
+| `antigravity` | `.agent/skills` |
+
+Add any custom IDE with `skillops config add-agentic`.
+
+## Configuration
+
+| File | Purpose |
+|---|---|
+| `~/.skillops/config/agentics.yaml` | Global IDE registry |
+| `~/.skillops/config/settings.yaml` | Registry sources for auto-pull |
+| `~/.skillops/skills/` | Global skill store |
+| `.skillops/config.json` | Local project config (per-project, commit to git) |
+
+### Registry support (optional)
+
+Configure skill registries in `~/.skillops/config/settings.yaml` to enable `skillops sync` to auto-pull missing skills:
+
+```yaml
+registries:
+  - url: https://github.com/your-org
+    name: company-internal
+```
+
+## Upgrading from v1
+
+If you used skillops v1, run these two commands in each project:
+
+```bash
+skillops init   # declare which IDEs this project uses
+skillops sync   # restore your skill links
+```
+
+Your global skill store (`~/.skillops/skills/`) and existing symlinks are untouched.
 
 ---
-**Skill folders are identified by the presence of a `SKILL.md` file.**
+
+A skill is any directory containing a `SKILL.md` file.

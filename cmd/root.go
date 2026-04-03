@@ -67,7 +67,6 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.AddGroup(&cobra.Group{ID: "project", Title: "Project Configuration"})
 	rootCmd.AddGroup(&cobra.Group{ID: "skill", Title: "Skill Configuration"})
-	rootCmd.AddGroup(&cobra.Group{ID: "agentic", Title: "Agentic Configuration"})
 
 	// Custom Help Template
 	cobra.AddTemplateFunc("styleHeader", func(s string) string {
