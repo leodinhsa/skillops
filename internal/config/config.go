@@ -19,7 +19,7 @@ var (
 	ConfigDir   string
 	SkillsDir   string
 	ConfigPath  string // ~/.skillops/config/agentics.yaml
-	Version     = "v1.0.0-dev"
+	Version     = "v1.0.0"
 )
 
 func init() {
