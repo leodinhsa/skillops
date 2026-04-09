@@ -36,9 +36,7 @@ var (
 
 	HeaderStyle = lipgloss.NewStyle().
 			Foreground(Pink).
-			Bold(true).
-			MarginTop(1).
-			MarginBottom(1)
+			Bold(true)
 
 	BorderStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
