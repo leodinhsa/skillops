@@ -175,7 +175,9 @@ func (m *listModel) View() string {
 		}
 
 		if start > 0 {
-			s += DimStyle.Render("   ... scroll up") + "\n"
+			s += DimStyle.Render("   ↑ scroll up") + "\n"
+		} else {
+			s += "\n"
 		}
 
 		lastRepo := ""
@@ -218,16 +220,16 @@ func (m *listModel) View() string {
 		}
 
 		if end < len(m.filtered) {
-			s += "\n" + DimStyle.Render("   ... scroll down") + "\n"
+			s += DimStyle.Render("   ↓ scroll down") + "\n"
 		} else {
-			s += "\n\n"
+			s += "\n"
 		}
 	}
 
 	if m.lastCopied != "" {
-		s += "\n" + SuccessStyle.Render(fmt.Sprintf("✓ Copied '%s' to clipboard", m.lastCopied)) + "\n"
+		s += SuccessStyle.Render(fmt.Sprintf("✓ Copied '%s' to clipboard", m.lastCopied)) + "\n"
 	} else {
-		s += "\n\n"
+		s += "\n"
 	}
 
 	// Calculate summary stats

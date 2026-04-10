@@ -10,6 +10,7 @@ import (
 	"skillops/internal/config"
 	"skillops/internal/skills"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -33,10 +34,12 @@ type addItem struct {
 // States: SKILL_SELECT → TOOL_SELECT → CONFIRM → done
 type addModel struct {
 	// Screen 1: skill selection
-	skillItems   []addItem
-	skillCursor  int
-	skillChecked map[int]bool
-	skillHeight  int // max visible rows
+	skillItems    []addItem
+	filteredItems []addItem
+	filterInput   textinput.Model
+	skillCursor   int
+	skillChecked  map[int]bool // keyed by index in skillItems (not filteredItems)
+	skillHeight   int          // max visible rows
 
 	// Screen 2: tool selection
 	activeTools []string
@@ -102,17 +105,44 @@ func NewAddModel(preselectedSkill string) (*addModel, error) {
 		startState = addStateToolSelect
 	}
 
+	ti := textinput.New()
+	ti.Placeholder = "Search skills..."
+	ti.Focus()
+
 	return &addModel{
-		skillItems:   items,
-		skillChecked: skillChecked,
-		skillHeight:  12,
-		activeTools:  activeTools,
-		toolChecked:  make(map[int]bool),
-		state:        startState,
+		skillItems:    items,
+		filteredItems: items,
+		filterInput:   ti,
+		skillChecked:  skillChecked,
+		skillHeight:   12,
+		activeTools:   activeTools,
+		toolChecked:   make(map[int]bool),
+		state:         startState,
 	}, nil
 }
 
-func (m *addModel) Init() tea.Cmd { return nil }
+func (m *addModel) Init() tea.Cmd { return textinput.Blink }
+
+// filterSkills updates filteredItems based on the current filter term.
+// skillChecked keys remain indices into skillItems (stable).
+func (m *addModel) filterSkills(term string) {
+	if term == "" {
+		m.filteredItems = m.skillItems
+		return
+	}
+	term = strings.ToLower(term)
+	var out []addItem
+	for _, item := range m.skillItems {
+		if strings.Contains(strings.ToLower(item.identity), term) ||
+			strings.Contains(strings.ToLower(item.repoName), term) {
+			out = append(out, item)
+		}
+	}
+	m.filteredItems = out
+	if m.skillCursor >= len(m.filteredItems) {
+		m.skillCursor = max(0, len(m.filteredItems)-1)
+	}
+}
 
 func (m *addModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -128,13 +158,21 @@ func (m *addModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.skillCursor--
 				}
 			case "down", "j":
-				if m.skillCursor < len(m.skillItems)-1 {
+				if m.skillCursor < len(m.filteredItems)-1 {
 					m.skillCursor++
 				}
 			case " ":
-				m.skillChecked[m.skillCursor] = !m.skillChecked[m.skillCursor]
+				if m.skillCursor < len(m.filteredItems) {
+					// Map filtered index back to skillItems index
+					identity := m.filteredItems[m.skillCursor].identity
+					for i, item := range m.skillItems {
+						if item.identity == identity {
+							m.skillChecked[i] = !m.skillChecked[i]
+							break
+						}
+					}
+				}
 			case "enter":
-				// Must have at least one skill selected
 				hasSkill := false
 				for _, v := range m.skillChecked {
 					if v {
@@ -146,6 +184,15 @@ func (m *addModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.state = addStateToolSelect
 					m.toolCursor = 0
 				}
+			default:
+				// Forward to text input
+				oldVal := m.filterInput.Value()
+				var cmd tea.Cmd
+				m.filterInput, cmd = m.filterInput.Update(msg)
+				if m.filterInput.Value() != oldVal {
+					m.filterSkills(m.filterInput.Value())
+				}
+				return m, cmd
 			}
 
 		case addStateToolSelect:
@@ -271,88 +318,115 @@ func (m *addModel) View() string {
 
 func (m *addModel) viewSkillSelect() string {
 	content := TitleStyle.Render(" ADD SKILL ") + "\n\n"
-	content += InfoStyle.Render("Select skills to add (grouped by repo):") + "\n\n"
+	content += m.filterInput.View() + "\n\n"
 
-	// Build a flat list of (index, item) for scrolling
+	// Build a flat list of (index, item) for scrolling — from filteredItems
 	type row struct {
-		idx      int
+		skillIdx int    // index into skillItems (for skillChecked)
 		item     addItem
 		isHeader bool
 		repo     string
 	}
 	var rows []row
 	lastRepo := ""
-	for i, item := range m.skillItems {
+	for fi, item := range m.filteredItems {
 		if item.repoName != lastRepo {
 			rows = append(rows, row{isHeader: true, repo: item.repoName})
 			lastRepo = item.repoName
 		}
-		rows = append(rows, row{idx: i, item: item})
+		// Find original index in skillItems
+		origIdx := fi
+		for i, si := range m.skillItems {
+			if si.identity == item.identity {
+				origIdx = i
+				break
+			}
+		}
+		rows = append(rows, row{skillIdx: origIdx, item: item})
 	}
 
-	// Find cursor row position (only non-header rows count for cursor)
-	cursorRowIdx := -1
-	for ri, r := range rows {
-		if !r.isHeader && r.idx == m.skillCursor {
-			cursorRowIdx = ri
-			break
+	if len(m.filteredItems) == 0 {
+		content += DimStyle.Render("  No skills matching filter") + "\n"
+	} else {
+		// Find cursor row position (only non-header rows count for cursor)
+		cursorRowIdx := -1
+		for ri, r := range rows {
+			if !r.isHeader && r.skillIdx == func() int {
+				if m.skillCursor < len(m.filteredItems) {
+					identity := m.filteredItems[m.skillCursor].identity
+					for i, si := range m.skillItems {
+						if si.identity == identity {
+							return i
+						}
+					}
+				}
+				return -1
+			}() {
+				cursorRowIdx = ri
+				break
+			}
 		}
-	}
+		if cursorRowIdx == -1 && len(rows) > 0 {
+			cursorRowIdx = 0
+		}
 
-	// Scrolling window over rows
-	start := 0
-	end := len(rows)
-	h := m.skillHeight + m.skillHeight/2 // account for headers taking space
-	if len(rows) > h {
-		start = cursorRowIdx - h/2
-		if start < 0 {
-			start = 0
-		}
-		end = start + h
-		if end > len(rows) {
-			end = len(rows)
-			start = end - h
+		// Scrolling window over rows
+		start := 0
+		end := len(rows)
+		h := m.skillHeight + m.skillHeight/2
+		if len(rows) > h {
+			start = cursorRowIdx - h/2
 			if start < 0 {
 				start = 0
 			}
-		}
-	}
-
-	if start > 0 {
-		content += DimStyle.Render("   ↑ scroll up") + "\n"
-	}
-
-	for ri := start; ri < end; ri++ {
-		r := rows[ri]
-		if r.isHeader {
-			content += "\n" + HeaderStyle.Render("📦 "+r.repo) + "\n"
-			continue
+			end = start + h
+			if end > len(rows) {
+				end = len(rows)
+				start = end - h
+				if start < 0 {
+					start = 0
+				}
+			}
 		}
 
-		checkbox := CheckboxStyle.Render("○")
-		if m.skillChecked[r.idx] {
-			checkbox = CheckboxStyle.Render("◉")
+		if start > 0 {
+			content += DimStyle.Render("   ↑ scroll up") + "\n"
+		} else {
+			content += "\n"
 		}
 
-		cursor := "  "
-		style := NormalStyle
-		if r.idx == m.skillCursor {
-			cursor = "> "
-			style = SelectedStyle
+		for ri := start; ri < end; ri++ {
+			r := rows[ri]
+			if r.isHeader {
+				content += "\n" + HeaderStyle.Render("📦 "+r.repo) + "\n"
+				continue
+			}
+
+			checkbox := CheckboxStyle.Render("○")
+			if m.skillChecked[r.skillIdx] {
+				checkbox = CheckboxStyle.Render("◉")
+			}
+
+			cursor := "  "
+			style := NormalStyle
+			if m.skillCursor < len(m.filteredItems) && m.filteredItems[m.skillCursor].identity == r.item.identity {
+				cursor = "> "
+				style = SelectedStyle
+			}
+
+			shortName := strings.SplitN(r.item.identity, "/", 2)
+			displayName := r.item.identity
+			if len(shortName) == 2 {
+				displayName = shortName[1]
+			}
+			content += fmt.Sprintf("%s%s %s\n", cursor, checkbox, style.Render(displayName))
 		}
 
-		shortName := strings.SplitN(r.item.identity, "/", 2)
-		displayName := r.item.identity
-		if len(shortName) == 2 {
-			displayName = shortName[1]
+		if end < len(rows) {
+			content += DimStyle.Render("   ↓ scroll down") + "\n"
+		} else {
+			content += "\n"
 		}
-		content += fmt.Sprintf("%s%s %s\n", cursor, checkbox, style.Render(displayName))
-	}
-
-	if end < len(rows) {
-		content += DimStyle.Render("   ↓ scroll down") + "\n"
-	} else {
-		content += "\n"
 	}
 
 	content += HelpStyle.Render("\n ↑/↓: navigate • space: toggle • enter: next • esc: quit")
