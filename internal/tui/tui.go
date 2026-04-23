@@ -27,6 +27,7 @@ type model struct {
 	cursor        int
 	quitting      bool
 	height        int // Number of visible items
+	termHeight    int // actual terminal height
 	agentName     string
 	editingPath   bool
 	pathInput     textinput.Model
@@ -125,6 +126,13 @@ func (m *model) Init() tea.Cmd {
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.quitting {
 		return m, tea.Quit
+	}
+
+	if ws, ok := msg.(tea.WindowSizeMsg); ok {
+		m.termHeight = ws.Height
+		// Reserve ~16 lines for headers, filter input, help, scroll indicators, and border
+		m.height = max(3, ws.Height-16)
+		return m, nil
 	}
 
 	if m.editingPath {
@@ -432,6 +440,7 @@ type checklistModel struct {
 	applied       []string // List of changes made for summary
 	filterInput   textinput.Model
 	height        int // Number of visible items
+	termHeight    int // actual terminal height
 }
 
 func NewChecklistModel() (*checklistModel, error) {
@@ -505,6 +514,11 @@ func (m *checklistModel) filter(term string) {
 
 func (m *checklistModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.termHeight = msg.Height
+		// Reserve ~16 lines for title, info, filter, help, scroll indicators, and border
+		m.height = max(3, msg.Height-16)
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "esc":

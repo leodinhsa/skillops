@@ -40,6 +40,7 @@ type addModel struct {
 	skillCursor   int
 	skillChecked  map[int]bool // keyed by index in skillItems (not filteredItems)
 	skillHeight   int          // max visible rows
+	termHeight    int          // actual terminal height
 
 	// Screen 2: tool selection
 	activeTools []string
@@ -146,6 +147,11 @@ func (m *addModel) filterSkills(term string) {
 
 func (m *addModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.termHeight = msg.Height
+		// Reserve ~16 lines for title, filter, help, scroll indicators, and border
+		m.skillHeight = max(3, msg.Height-16)
+		return m, nil
 	case tea.KeyMsg:
 		switch m.state {
 		case addStateSkillSelect:

@@ -21,6 +21,7 @@ type listModel struct {
 	quitting        bool
 	filterInput     textinput.Model
 	height          int
+	termHeight      int // actual terminal height
 	lastCopied      string
 	repoMetadata    map[string]skills.RepoMetadata
 	repoSkillCounts map[string]int
@@ -95,6 +96,11 @@ func (m *listModel) filter(term string) {
 
 func (m *listModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.termHeight = msg.Height
+		// Reserve ~18 lines for title, filter, help, stats, scroll indicators, and border
+		m.height = max(3, msg.Height-18)
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "up", "k":

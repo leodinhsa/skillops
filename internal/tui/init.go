@@ -33,12 +33,13 @@ type initModel struct {
 	// Which tools were already active before this run (from local config)
 	previouslyActive map[string]bool
 
-	cursor   int
-	height   int // max visible rows in checklist
-	state    initState
-	quitting bool
-	err      error
-	applied  []string
+	cursor     int
+	height     int // max visible rows in checklist
+	termHeight int // actual terminal height, set via WindowSizeMsg
+	state      initState
+	quitting   bool
+	err        error
+	applied    []string
 }
 
 // NewInitModel creates an initModel pre-checked from the existing local config.
@@ -84,6 +85,11 @@ func (m *initModel) Init() tea.Cmd { return nil }
 
 func (m *initModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.termHeight = msg.Height
+		// Reserve ~16 lines for title, info, help, scroll indicators, and border
+		m.height = max(3, msg.Height-16)
+		return m, nil
 	case tea.KeyMsg:
 		switch m.state {
 		case initStateChecklist:
