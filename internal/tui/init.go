@@ -33,12 +33,12 @@ type initModel struct {
 	// Which tools were already active before this run (from local config)
 	previouslyActive map[string]bool
 
-	cursor int
-	height int // max visible rows in checklist
-	state  initState
-	quitting   bool
-	err        error
-	applied    []string
+	cursor   int
+	height   int // max visible rows in checklist
+	state    initState
+	quitting bool
+	err      error
+	applied  []string
 }
 
 // NewInitModel creates an initModel pre-checked from the existing local config.

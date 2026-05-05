@@ -37,9 +37,9 @@ type addModel struct {
 	skillItems    []addItem
 	filteredItems []addItem
 	filterInput   textinput.Model
-	skillCursor  int
-	skillChecked map[int]bool // keyed by index in skillItems (not filteredItems)
-	skillHeight  int          // max visible rows
+	skillCursor   int
+	skillChecked  map[int]bool // keyed by index in skillItems (not filteredItems)
+	skillHeight   int          // max visible rows
 
 	// Screen 2: tool selection
 	activeTools []string

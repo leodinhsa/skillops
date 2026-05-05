@@ -17,11 +17,11 @@ import (
 type listModel struct {
 	allSkills       []skills.Skill
 	filtered        []skills.Skill
-	cursor      int
-	quitting    bool
-	filterInput textinput.Model
-	height      int
-	lastCopied  string
+	cursor          int
+	quitting        bool
+	filterInput     textinput.Model
+	height          int
+	lastCopied      string
 	repoMetadata    map[string]skills.RepoMetadata
 	repoSkillCounts map[string]int
 	orderedRepos    []string
