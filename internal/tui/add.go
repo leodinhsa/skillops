@@ -37,10 +37,9 @@ type addModel struct {
 	skillItems    []addItem
 	filteredItems []addItem
 	filterInput   textinput.Model
-	skillCursor   int
-	skillChecked  map[int]bool // keyed by index in skillItems (not filteredItems)
-	skillHeight   int          // max visible rows
-	termHeight    int          // actual terminal height
+	skillCursor  int
+	skillChecked map[int]bool // keyed by index in skillItems (not filteredItems)
+	skillHeight  int          // max visible rows
 
 	// Screen 2: tool selection
 	activeTools []string
@@ -148,7 +147,6 @@ func (m *addModel) filterSkills(term string) {
 func (m *addModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.termHeight = msg.Height
 		// Reserve ~16 lines for title, filter, help, scroll indicators, and border
 		m.skillHeight = max(3, msg.Height-16)
 		return m, nil
@@ -326,21 +324,28 @@ func (m *addModel) viewSkillSelect() string {
 	content := TitleStyle.Render(" ADD SKILL ") + "\n\n"
 	content += m.filterInput.View() + "\n\n"
 
-	// Build a flat list of (index, item) for scrolling — from filteredItems
+	// Build a flat rows slice (blank + header per repo group, one row per skill)
+	// so the height window accounts for every rendered line, not just skill lines.
+	type rowKind int
+	const (
+		rowBlank rowKind = iota
+		rowHeader
+		rowSkill
+	)
 	type row struct {
-		skillIdx int    // index into skillItems (for skillChecked)
-		item     addItem
-		isHeader bool
-		repo     string
+		kind     rowKind
+		skillIdx int     // rowSkill: index into skillItems
+		item     addItem // rowSkill
+		repo     string  // rowHeader
 	}
 	var rows []row
 	lastRepo := ""
 	for fi, item := range m.filteredItems {
 		if item.repoName != lastRepo {
-			rows = append(rows, row{isHeader: true, repo: item.repoName})
+			rows = append(rows, row{kind: rowBlank})
+			rows = append(rows, row{kind: rowHeader, repo: item.repoName})
 			lastRepo = item.repoName
 		}
-		// Find original index in skillItems
 		origIdx := fi
 		for i, si := range m.skillItems {
 			if si.identity == item.identity {
@@ -348,47 +353,43 @@ func (m *addModel) viewSkillSelect() string {
 				break
 			}
 		}
-		rows = append(rows, row{skillIdx: origIdx, item: item})
+		rows = append(rows, row{kind: rowSkill, skillIdx: origIdx, item: item})
 	}
 
 	if len(m.filteredItems) == 0 {
 		content += DimStyle.Render("  No skills matching filter") + "\n"
 	} else {
-		// Find cursor row position (only non-header rows count for cursor)
-		cursorRowIdx := -1
-		for ri, r := range rows {
-			if !r.isHeader && r.skillIdx == func() int {
-				if m.skillCursor < len(m.filteredItems) {
-					identity := m.filteredItems[m.skillCursor].identity
-					for i, si := range m.skillItems {
-						if si.identity == identity {
-							return i
-						}
-					}
+		// Find cursor row position in the flat slice
+		cursorRowIdx := 0
+		cursorOrigIdx := -1
+		if m.skillCursor < len(m.filteredItems) {
+			identity := m.filteredItems[m.skillCursor].identity
+			for i, si := range m.skillItems {
+				if si.identity == identity {
+					cursorOrigIdx = i
+					break
 				}
-				return -1
-			}() {
+			}
+		}
+		for ri, r := range rows {
+			if r.kind == rowSkill && r.skillIdx == cursorOrigIdx {
 				cursorRowIdx = ri
 				break
 			}
 		}
-		if cursorRowIdx == -1 && len(rows) > 0 {
-			cursorRowIdx = 0
-		}
 
-		// Scrolling window over rows
+		// Apply height window to flat rows
 		start := 0
 		end := len(rows)
-		h := m.skillHeight + m.skillHeight/2
-		if len(rows) > h {
-			start = cursorRowIdx - h/2
+		if len(rows) > m.skillHeight {
+			start = cursorRowIdx - m.skillHeight/2
 			if start < 0 {
 				start = 0
 			}
-			end = start + h
+			end = start + m.skillHeight
 			if end > len(rows) {
 				end = len(rows)
-				start = end - h
+				start = end - m.skillHeight
 				if start < 0 {
 					start = 0
 				}
@@ -403,29 +404,31 @@ func (m *addModel) viewSkillSelect() string {
 
 		for ri := start; ri < end; ri++ {
 			r := rows[ri]
-			if r.isHeader {
-				content += "\n" + HeaderStyle.Render("📦 "+r.repo) + "\n"
-				continue
-			}
+			switch r.kind {
+			case rowBlank:
+				content += "\n"
+			case rowHeader:
+				content += HeaderStyle.Render("📦 " + r.repo) + "\n"
+			case rowSkill:
+				checkbox := CheckboxStyle.Render("○")
+				if m.skillChecked[r.skillIdx] {
+					checkbox = CheckboxStyle.Render("◉")
+				}
 
-			checkbox := CheckboxStyle.Render("○")
-			if m.skillChecked[r.skillIdx] {
-				checkbox = CheckboxStyle.Render("◉")
-			}
+				cursor := "  "
+				style := NormalStyle
+				if m.skillCursor < len(m.filteredItems) && m.filteredItems[m.skillCursor].identity == r.item.identity {
+					cursor = "> "
+					style = SelectedStyle
+				}
 
-			cursor := "  "
-			style := NormalStyle
-			if m.skillCursor < len(m.filteredItems) && m.filteredItems[m.skillCursor].identity == r.item.identity {
-				cursor = "> "
-				style = SelectedStyle
+				shortName := strings.SplitN(r.item.identity, "/", 2)
+				displayName := r.item.identity
+				if len(shortName) == 2 {
+					displayName = shortName[1]
+				}
+				content += fmt.Sprintf("%s%s %s\n", cursor, checkbox, style.Render(displayName))
 			}
-
-			shortName := strings.SplitN(r.item.identity, "/", 2)
-			displayName := r.item.identity
-			if len(shortName) == 2 {
-				displayName = shortName[1]
-			}
-			content += fmt.Sprintf("%s%s %s\n", cursor, checkbox, style.Render(displayName))
 		}
 
 		if end < len(rows) {
