@@ -127,6 +127,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	if ws, ok := msg.(tea.WindowSizeMsg); ok {
+		// Reserve ~16 lines for headers, filter input, help, scroll indicators, and border
+		m.height = max(3, ws.Height-16)
+		return m, nil
+	}
+
 	if m.editingPath {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
@@ -337,19 +343,55 @@ func (m *model) View() string {
 		content += InfoStyle.Render(fmt.Sprintf("Path: %s", m.agentPath)) + "\n\n"
 		content += m.filterInput.View() + "\n\n"
 
-		// Calculate scrolling window
-		start := 0
-		end := len(m.filtered)
+		// Build a flat rows slice (blank + header per repo group, one row per skill)
+		// so the height window accounts for every rendered line, not just skill lines.
+		type rowKind int
+		const (
+			rowBlank rowKind = iota
+			rowHeader
+			rowSkill
+		)
+		type viewRow struct {
+			kind     rowKind
+			repoName string // rowHeader
+			skillIdx int    // rowSkill: index into m.filtered
+		}
 
-		if len(m.filtered) > m.height {
-			start = m.cursor - (m.height / 2)
+		var rows []viewRow
+		lastRepo := ""
+		for i, skill := range m.filtered {
+			if skill.RepoName != lastRepo {
+				rows = append(rows, viewRow{kind: rowBlank})
+				rows = append(rows, viewRow{kind: rowHeader, repoName: skill.RepoName})
+				lastRepo = skill.RepoName
+			}
+			rows = append(rows, viewRow{kind: rowSkill, skillIdx: i})
+		}
+
+		// Find the flat-row index of the cursor skill
+		cursorRowIdx := 0
+		for ri, r := range rows {
+			if r.kind == rowSkill && r.skillIdx == m.cursor {
+				cursorRowIdx = ri
+				break
+			}
+		}
+
+		// Apply height window to flat rows
+		start := 0
+		end := len(rows)
+		if len(rows) > m.height {
+			start = cursorRowIdx - m.height/2
 			if start < 0 {
 				start = 0
 			}
 			end = start + m.height
-			if end > len(m.filtered) {
-				end = len(m.filtered)
+			if end > len(rows) {
+				end = len(rows)
 				start = end - m.height
+				if start < 0 {
+					start = 0
+				}
 			}
 		}
 
@@ -357,42 +399,42 @@ func (m *model) View() string {
 			content += DimStyle.Render("   ... scroll up") + "\n"
 		}
 
-		lastRepo := ""
-		for i := start; i < end; i++ {
-			skill := m.filtered[i]
+		for ri := start; ri < end; ri++ {
+			r := rows[ri]
+			switch r.kind {
+			case rowBlank:
+				content += "\n"
+			case rowHeader:
+				content += HeaderStyle.Render("📦 " + r.repoName) + "\n"
+			case rowSkill:
+				skill := m.filtered[r.skillIdx]
 
-			// Grouping header
-			if skill.RepoName != lastRepo {
-				content += "\n" + HeaderStyle.Render("📦 "+skill.RepoName) + "\n"
-				lastRepo = skill.RepoName
-			}
-
-			// Find selection status from original index
-			isSelected := false
-			for origIdx, s := range m.skills {
-				if s.Path == skill.Path {
-					isSelected = m.selected[origIdx]
-					break
+				// Find selection status from original index
+				isSelected := false
+				for origIdx, s := range m.skills {
+					if s.Path == skill.Path {
+						isSelected = m.selected[origIdx]
+						break
+					}
 				}
-			}
 
-			checkbox := CheckboxStyle.Render("○")
-			if isSelected {
-				checkbox = CheckboxStyle.Render("◉")
-			}
+				checkbox := CheckboxStyle.Render("○")
+				if isSelected {
+					checkbox = CheckboxStyle.Render("◉")
+				}
 
-			cursor := "  "
-			style := NormalStyle
-			if i == m.cursor {
-				cursor = "> "
-				style = SelectedStyle
-			}
+				cur := "  "
+				style := NormalStyle
+				if r.skillIdx == m.cursor {
+					cur = "> "
+					style = SelectedStyle
+				}
 
-			line := fmt.Sprintf("%s%s %s", cursor, checkbox, style.Render(skills.GetSkillName(skill)))
-			content += line + "\n"
+				content += fmt.Sprintf("%s%s %s\n", cur, checkbox, style.Render(skills.GetSkillName(skill)))
+			}
 		}
 
-		if end < len(m.filtered) {
+		if end < len(rows) {
 			content += DimStyle.Render("   ... scroll down") + "\n"
 		} else {
 			content += "\n" // Placeholder for scroll down
@@ -505,6 +547,10 @@ func (m *checklistModel) filter(term string) {
 
 func (m *checklistModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		// Reserve ~16 lines for title, info, filter, help, scroll indicators, and border
+		m.height = max(3, msg.Height-16)
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "esc":

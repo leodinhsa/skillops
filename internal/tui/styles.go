@@ -42,8 +42,7 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(Purple).
 			Padding(1, 2).
-			Width(90).
-			Height(30)
+			Width(90)
 
 	InfoStyle = lipgloss.NewStyle().
 			Foreground(Dim).

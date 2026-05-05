@@ -84,6 +84,10 @@ func (m *initModel) Init() tea.Cmd { return nil }
 
 func (m *initModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		// Reserve ~16 lines for title, info, help, scroll indicators, and border
+		m.height = max(3, msg.Height-16)
+		return m, nil
 	case tea.KeyMsg:
 		switch m.state {
 		case initStateChecklist:

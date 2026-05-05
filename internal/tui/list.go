@@ -95,6 +95,10 @@ func (m *listModel) filter(term string) {
 
 func (m *listModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		// Reserve ~18 lines for title, filter, help, stats, scroll indicators, and border
+		m.height = max(3, msg.Height-18)
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "up", "k":
@@ -159,18 +163,71 @@ func (m *listModel) View() string {
 	if len(m.filtered) == 0 {
 		s += DimStyle.Render("  No skills matching filter") + "\n"
 	} else {
-		// Calculate viewport
+		// Build a flat rows slice (blank separators + headers + skills) so the
+		// height window accounts for every rendered line, not just skill lines.
+		type rowKind int
+		const (
+			rowBlank rowKind = iota
+			rowHeader
+			rowSkill
+		)
+		type viewRow struct {
+			kind rowKind
+			text string // rowHeader: rendered header string
+			idx  int    // rowSkill: index into m.filtered
+		}
+
+		var rows []viewRow
+		lastRepo := ""
+		for i, skill := range m.filtered {
+			if skill.RepoName != lastRepo {
+				displayRepoName := skill.RepoName
+				if meta, ok := m.repoMetadata[skill.RepoName]; ok {
+					fullPath := git.ExtractFullRepoPath(meta.URL)
+					if fullPath != "" {
+						displayRepoName = fullPath
+					}
+				}
+				repoIdx := 1
+				for j, r := range m.orderedRepos {
+					if r == skill.RepoName {
+						repoIdx = j + 1
+						break
+					}
+				}
+				count := m.repoSkillCounts[skill.RepoName]
+				header := fmt.Sprintf("%d. 📦 %s %s", repoIdx, displayRepoName, DimStyle.Render(fmt.Sprintf("%d skills", count)))
+				rows = append(rows, viewRow{kind: rowBlank})
+				rows = append(rows, viewRow{kind: rowHeader, text: header})
+				lastRepo = skill.RepoName
+			}
+			rows = append(rows, viewRow{kind: rowSkill, idx: i})
+		}
+
+		// Find the flat-row index of the cursor skill
+		cursorRowIdx := 0
+		for ri, r := range rows {
+			if r.kind == rowSkill && r.idx == m.cursor {
+				cursorRowIdx = ri
+				break
+			}
+		}
+
+		// Apply height window to flat rows
 		start := 0
-		end := len(m.filtered)
-		if len(m.filtered) > m.height {
-			start = m.cursor - (m.height / 2)
+		end := len(rows)
+		if len(rows) > m.height {
+			start = cursorRowIdx - m.height/2
 			if start < 0 {
 				start = 0
 			}
 			end = start + m.height
-			if end > len(m.filtered) {
-				end = len(m.filtered)
+			if end > len(rows) {
+				end = len(rows)
 				start = end - m.height
+				if start < 0 {
+					start = 0
+				}
 			}
 		}
 
@@ -180,46 +237,26 @@ func (m *listModel) View() string {
 			s += "\n"
 		}
 
-		lastRepo := ""
-		for i := start; i < end; i++ {
-			skill := m.filtered[i]
-
-			// Grouping header
-			if skill.RepoName != lastRepo {
-				displayRepoName := skill.RepoName
-				if meta, ok := m.repoMetadata[skill.RepoName]; ok {
-					fullPath := git.ExtractFullRepoPath(meta.URL)
-					if fullPath != "" {
-						displayRepoName = fullPath
-					}
+		for ri := start; ri < end; ri++ {
+			r := rows[ri]
+			switch r.kind {
+			case rowBlank:
+				s += "\n"
+			case rowHeader:
+				s += HeaderStyle.Render(r.text) + "\n"
+			case rowSkill:
+				skill := m.filtered[r.idx]
+				cursor := "  "
+				style := NormalStyle
+				if r.idx == m.cursor {
+					cursor = "> "
+					style = SelectedStyle
 				}
-
-				// Find index of this repo
-				repoIdx := 1
-				for j, r := range m.orderedRepos {
-					if r == skill.RepoName {
-						repoIdx = j + 1
-						break
-					}
-				}
-
-				count := m.repoSkillCounts[skill.RepoName]
-				header := fmt.Sprintf("%d. 📦 %s %s", repoIdx, displayRepoName, DimStyle.Render(fmt.Sprintf("%d skills", count)))
-
-				s += "\n" + HeaderStyle.Render(header) + "\n"
-				lastRepo = skill.RepoName
+				s += fmt.Sprintf("%s%s\n", cursor, style.Render(skills.GetSkillName(skill)))
 			}
-
-			cursor := "  "
-			style := NormalStyle
-			if i == m.cursor {
-				cursor = "> "
-				style = SelectedStyle
-			}
-			s += fmt.Sprintf("%s%s\n", cursor, style.Render(skills.GetSkillName(skill)))
 		}
 
-		if end < len(m.filtered) {
+		if end < len(rows) {
 			s += DimStyle.Render("   ↓ scroll down") + "\n"
 		} else {
 			s += "\n"
