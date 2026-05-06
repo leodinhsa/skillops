@@ -224,23 +224,26 @@ FUNCTION ParseSkillIdentity(identity: string) -> (ParsedIdentity, error)
          RETURN error("invalid identity: need at least host/owner/repo/skill")
        END IF
     
-    3. Extract components
+    3. Validate all components for path traversal
+       FOR EACH part IN parts DO
+         IF part == "" OR part == "." OR part == ".." THEN
+           RETURN error("invalid identity: component cannot be empty, '.', or '..'")
+         END IF
+       END FOR
+    
+    4. Extract components
        host = parts[0]
        owner = parts[1]
        repo = parts[2]
        pathInRepo = strings.Join(parts[3:], "/")
        shortName = filepath.Base(pathInRepo)
     
-    4. Validate components
-       IF host == "" OR owner == "" OR repo == "" OR pathInRepo == "" THEN
-         RETURN error("invalid identity: empty component")
-       END IF
-       
+    5. Validate short name
        IF shortName == "" OR shortName == "." OR shortName == ".." THEN
          RETURN error("invalid skill path")
        END IF
     
-    5. RETURN ParsedIdentity{
+    6. RETURN ParsedIdentity{
          Full: identity,
          Host: host,
          Owner: owner,
@@ -283,10 +286,24 @@ FUNCTION MatchesRegistry(reg: Registry, host: string, owner: string) -> bool
   STEPS:
     1. Normalize registry URL
        normalized = NormalizeURL(reg.URL)
-       // Remove protocol, replace : with /
+       // Remove protocol (https://, git@), replace : with /
+       // Example: "git@github.com:anthropics" -> "github.com/anthropics"
     
-    2. Check if contains both host and owner
-       RETURN Contains(normalized, host) AND Contains(normalized, owner)
+    2. Build expected path
+       expectedPath = host + "/" + owner
+    
+    3. Check exact match or prefix match
+       // Exact match: registry is exactly host/owner
+       IF normalized == expectedPath THEN
+         RETURN true
+       END IF
+       
+       // Prefix match: registry is host/owner/... (more specific)
+       IF strings.HasPrefix(normalized, expectedPath + "/") THEN
+         RETURN true
+       END IF
+       
+       RETURN false
 END FUNCTION
 ```
 
@@ -605,6 +622,31 @@ if !exists(globalPath) {
 - Real-time validation
 - Navigation between fields
 
+### 4. Remove Command Changes
+
+**File:** `cmd/remove.go`
+
+**Changes:**
+- Support symlink name or full identity for selection
+- When symlink name matches multiple skills, launch disambiguation TUI
+- Display full identities in disambiguation TUI
+- Remove both skill identity and custom symlink name from config
+
+**Disambiguation TUI:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│  MULTIPLE SKILLS MATCH: logger                               │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Select which skill to remove:                               │
+│                                                              │
+│  [ ] github.com/company-a/utils/tools/logger                │
+│  [ ] github.com/company-b/helpers/services/logger           │
+│                                                              │
+│  [↑↓] Navigate  [Space] Select  [Enter] Confirm             │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ### 4. Discovery Changes
 
 **File:** `internal/skills/skills.go`
@@ -753,12 +795,14 @@ filepath.WalkDir(config.SkillsDir, func(path string, d fs.DirEntry, err error) e
 
 ## Migration and Compatibility
 
-**Note:** There are no existing users, so no migration is required.
+**Note:** There are no existing users, so no migration or backward compatibility is required.
 
-**For future reference:**
-- Config version "2" indicates new schema
-- Old version "1" configs would need manual migration
-- Global store structure change requires re-pulling skills
+**Design decision:** The system does not support 2-level identities (`repo/skill`). All identities must be full-path format (`host/owner/repo/skill`).
+
+**Rationale:**
+- Clean break from old design
+- Simpler implementation (no compatibility shims)
+- No technical debt from supporting legacy format
 
 ## Performance Considerations
 
@@ -769,22 +813,27 @@ filepath.WalkDir(config.SkillsDir, func(path string, d fs.DirEntry, err error) e
 3. **Discovery**: O(s) where s is number of skills, optimized with early SKILL.md check
 4. **Conflict Detection**: O(n) where n is number of skills being added
 
-### Expected Performance
-
-- Parse 1000 identities: < 10ms
-- Match against 20 registries: < 100ms
-- Discover 500 skills: < 5s
-- Detect conflicts in 100 skills: < 50ms
+**Note:** Performance is not a primary concern for this feature. The system is designed for correctness and usability first.
 
 ## Security Considerations
 
 ### Path Traversal Prevention
 
 **Validation at multiple levels:**
-1. Identity parsing validates no ".." components
+1. Identity parsing validates ALL components (not just shortName) for ".." and "."
 2. Symlink name validation prevents path separators
 3. Global path construction uses `filepath.Join` (safe)
 4. Custom names validated before use
+
+**Complete validation:**
+```go
+// Validate every component during parsing
+for _, part := range parts {
+    if part == "" || part == "." || part == ".." {
+        return fmt.Errorf("invalid component: %s", part)
+    }
+}
+```
 
 ### Symlink Safety
 
