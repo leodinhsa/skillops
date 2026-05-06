@@ -556,6 +556,179 @@ FUNCTION UpdateSkill(skillPath: string) -> error
 END FUNCTION
 ```
 
+### 7. Pull Skill From URL Algorithm
+
+```
+FUNCTION PullSkillFromURL(repoURL: string, pathInRepo: string, destSkillDir: string) -> error
+  INPUT:
+    - repoURL: Full git repository URL (e.g., "https://github.com/anthropics/skills")
+    - pathInRepo: Path from repo root to skill (e.g., "skills/logger")
+    - destSkillDir: Destination path in global store (e.g., "~/.skillops/skills/github.com/anthropics/skills/skills/logger")
+  OUTPUT: Error if pull fails
+  
+  PURPOSE: Clone a repository, extract a specific skill subdirectory, and save metadata.
+          Used by both Pull Command (--skill flag) and Sync Command (auto-pull).
+  
+  STEPS:
+    1. Create temporary directory
+       tempDir = os.MkdirTemp("", "skillops-pull-*")
+       defer os.RemoveAll(tempDir)
+    
+    2. Clone repository (shallow clone for efficiency)
+       err = git.Clone(repoURL, tempDir, "--depth", "1")
+       IF err != nil THEN
+         RETURN error("failed to clone repository: " + err)
+       END IF
+    
+    3. Construct skill source path
+       skillSource = filepath.Join(tempDir, pathInRepo)
+    
+    4. Verify skill exists
+       IF NOT exists(skillSource + "/SKILL.md") THEN
+         RETURN error("skill not found at path: " + pathInRepo)
+       END IF
+    
+    5. Create destination parent directories
+       err = os.MkdirAll(filepath.Dir(destSkillDir), 0755)
+       IF err != nil THEN
+         RETURN error("failed to create destination parent: " + err)
+       END IF
+    
+    6. Copy skill directory atomically
+       // Use temp-then-rename for atomicity
+       tempDest = destSkillDir + ".tmp"
+       err = utils.CopyDir(skillSource, tempDest)
+       IF err != nil THEN
+         os.RemoveAll(tempDest)
+         RETURN error("failed to copy skill: " + err)
+       END IF
+       
+       // Atomic rename
+       err = os.Rename(tempDest, destSkillDir)
+       IF err != nil THEN
+         os.RemoveAll(tempDest)
+         RETURN error("failed to finalize skill: " + err)
+       END IF
+    
+    7. Get commit hash from cloned repo
+       commitHash = getLatestCommit(tempDir)
+    
+    8. Save skill metadata
+       meta = SkillMetadata{
+         RepoURL:    repoURL,
+         PathInRepo: pathInRepo,
+         PulledAt:   time.Now(),
+         CommitHash: commitHash,
+       }
+       
+       metaPath = filepath.Join(destSkillDir, ".so-skill-meta.json")
+       err = SaveSkillMetadata(metaPath, meta)
+       IF err != nil THEN
+         // Non-fatal: warn but don't fail the pull
+         log.Warn("failed to save metadata: " + err)
+       END IF
+    
+    9. RETURN nil
+END FUNCTION
+```
+
+**Key design decisions:**
+- **Shallow clone** (`--depth 1`) for efficiency
+- **Atomic copy** (temp-then-rename) to prevent partial state
+- **Metadata save is non-fatal** (warn but don't fail)
+- **Cleanup on error** (remove temp directories)
+
+### 8. Parse Repository URL Algorithm
+
+```
+FUNCTION ParseRepoURL(repoURL: string) -> (host: string, owner: string, repo: string, error)
+  INPUT: Git repository URL in various formats
+  OUTPUT: Extracted host, owner (may contain /), and repo name
+  
+  PURPOSE: Extract host, owner, and repo from git URLs supporting:
+           - HTTPS: https://github.com/owner/repo.git
+           - SSH: git@github.com:owner/repo.git
+           - Self-hosted: https://gitlab.company.internal/group/subgroup/repo
+           - Multi-level groups (GitLab): owner can contain "/"
+  
+  STEPS:
+    1. Normalize URL
+       url = strings.TrimSpace(repoURL)
+       url = strings.TrimSuffix(url, ".git")  // Remove .git suffix
+    
+    2. Detect URL format and extract path
+       IF strings.HasPrefix(url, "git@") THEN
+         // SSH format: git@github.com:owner/repo
+         url = strings.TrimPrefix(url, "git@")
+         parts = strings.SplitN(url, ":", 2)
+         IF len(parts) != 2 THEN
+           RETURN error("invalid SSH URL format")
+         END IF
+         host = parts[0]
+         pathPart = parts[1]
+       ELSE IF strings.HasPrefix(url, "https://") OR strings.HasPrefix(url, "http://") THEN
+         // HTTPS format: https://github.com/owner/repo
+         url = strings.TrimPrefix(url, "https://")
+         url = strings.TrimPrefix(url, "http://")
+         parts = strings.SplitN(url, "/", 2)
+         IF len(parts) != 2 THEN
+           RETURN error("invalid HTTPS URL format")
+         END IF
+         host = parts[0]
+         pathPart = parts[1]
+       ELSE
+         RETURN error("unsupported URL format (must be HTTPS or SSH)")
+       END IF
+    
+    3. Extract owner and repo from path
+       // pathPart examples:
+       // - "anthropics/skills" → owner="anthropics", repo="skills"
+       // - "group/subgroup/project" → owner="group/subgroup", repo="project"
+       
+       pathComponents = strings.Split(pathPart, "/")
+       IF len(pathComponents) < 2 THEN
+         RETURN error("URL must contain at least owner/repo")
+       END IF
+       
+       // Repo is always the last component
+       repo = pathComponents[len(pathComponents)-1]
+       
+       // Owner is everything before repo (supports multi-level groups)
+       owner = strings.Join(pathComponents[0:len(pathComponents)-1], "/")
+    
+    4. Validate components
+       IF host == "" OR owner == "" OR repo == "" THEN
+         RETURN error("invalid URL: empty component")
+       END IF
+       
+       // Validate no path traversal in components
+       allComponents = append(strings.Split(owner, "/"), repo)
+       FOR EACH component IN allComponents DO
+         IF component == "" OR component == "." OR component == ".." THEN
+           RETURN error("invalid URL: component cannot be empty, '.', or '..'")
+         END IF
+       END FOR
+    
+    5. RETURN host, owner, repo, nil
+END FUNCTION
+```
+
+**Examples:**
+
+| Input URL | Host | Owner | Repo |
+|-----------|------|-------|------|
+| `https://github.com/anthropics/skills.git` | `github.com` | `anthropics` | `skills` |
+| `git@github.com:company/utils.git` | `github.com` | `company` | `utils` |
+| `https://gitlab.com/group/subgroup/project` | `gitlab.com` | `group/subgroup` | `project` |
+| `https://gitlab.company.internal/team/backend/api` | `gitlab.company.internal` | `team/backend` | `api` |
+| `git@bitbucket.org:org/repo` | `bitbucket.org` | `org` | `repo` |
+
+**Multi-level group support:**
+- Owner can contain "/" for GitLab nested groups
+- Global store path: `~/.skillops/skills/<host>/<owner>/<repo>/`
+- Example: `~/.skillops/skills/gitlab.com/group/subgroup/project/`
+- Identity: `gitlab.com/group/subgroup/project/skills/auth`
+
 ## Component Specifications
 
 ### 1. Pull Command Changes
@@ -563,20 +736,33 @@ END FUNCTION
 **File:** `cmd/pull.go`
 
 **Changes:**
-- Extract host and owner from repository URL
+- Extract host and owner from repository URL using `git.ParseRepoURL`
 - Create directory structure: `~/.skillops/skills/<host>/<owner>/<repo>`
 - Save `.so-repo-meta.json` for full pulls
-- Save `.so-skill-meta.json` for specific skill pulls with `path_in_repo`
+- Use `PullSkillFromURL` for specific skill pulls with `--skill` flag
 
 **Key logic:**
 ```go
-// Extract host/owner from URL
-// github.com/anthropics/skills → host="github.com", owner="anthropics"
+// Extract host/owner/repo from URL
+// Supports multi-level groups (e.g., GitLab group/subgroup/project)
 host, owner, repo := git.ParseRepoURL(url)
 
 // Create nested directory
 dest := filepath.Join(config.SkillsDir, host, owner, repo)
+
+// For --skill flag, use PullSkillFromURL
+if skillFlag != "" {
+    pathInRepo := skillFlag  // e.g., "skills/logger"
+    destSkillDir := filepath.Join(dest, pathInRepo)
+    return PullSkillFromURL(url, pathInRepo, destSkillDir)
+}
+
+// For full repo pull
+git.Clone(url, dest)
+SaveRepoMetadata(dest, RepoMetadata{...})
 ```
+
+**Note:** `PullSkillFromURL` is shared with Sync Command for auto-pull functionality. See Algorithm Specifications section for complete implementation details.
 
 ### 2. Sync Command Changes
 
@@ -663,11 +849,22 @@ if !exists(globalPath) {
 - Walk global store starting from `~/.skillops/skills/`
 - Construct full-path identities from filesystem paths
 - Extract host, owner, repo from directory structure
+- Skip hidden directories (starting with ".")
 
 **Key logic:**
 ```go
 // Walk global store
 filepath.WalkDir(config.SkillsDir, func(path string, d fs.DirEntry, err error) error {
+    if err != nil {
+        return err
+    }
+    
+    // Skip hidden directories (.git, .so-*, etc.)
+    if d.IsDir() && strings.HasPrefix(d.Name(), ".") {
+        return filepath.SkipDir
+    }
+    
+    // Check for SKILL.md
     if d.IsDir() && exists(filepath.Join(path, "SKILL.md")) {
         // Found a skill
         relPath, _ := filepath.Rel(config.SkillsDir, path)
@@ -682,6 +879,12 @@ filepath.WalkDir(config.SkillsDir, func(path string, d fs.DirEntry, err error) e
     return nil
 })
 ```
+
+**Rationale for skipping hidden directories:**
+- Avoids scanning `.git/` subdirectories (thousands of inodes per repo)
+- Prevents false positives from crafted SKILL.md files in `.git/`
+- Skips `.so-repo-meta.json` and `.so-skill-meta.json` parent directories
+- Performance optimization for large global stores
 
 ### 6. New Registry Matcher
 
