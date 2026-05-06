@@ -1,10 +1,21 @@
-# Requirements Document: Nested Skill Paths Support
+# Requirements Document: Full-Path Identity Support
 
 ## Introduction
 
-This feature extends skillops to support nested skill directory structures beyond the current 2-level `repo/skill` format. Currently, skillops assumes all skill identities follow the pattern `repo_name/skill_name`, which causes issues when skill repositories have nested directory structures like `repo/path/to/skill`. The system incorrectly attempts to create nested symlink directories instead of using only the final skill name component.
+This feature fundamentally redesigns skillops skill identity format to use full paths including host, owner, and repository information. The current 2-level `repo/skill` format causes critical issues:
 
-This enhancement will allow skillops to handle arbitrary nesting depth in skill paths while maintaining backward compatibility with existing 2-level identities.
+1. **Repository collision**: Multiple organizations can have repositories with the same name (e.g., `company-a/common-utils` vs `company-b/common-utils`)
+2. **Nested path limitation**: Cannot represent skills in nested directory structures (e.g., `repo/backend/services/api/skills/auth`)
+3. **Team collaboration friction**: No mechanism to share registry URLs, requiring manual setup for each team member
+4. **Source ambiguity**: Cannot determine which git host (GitHub, GitLab, Bitbucket, self-hosted) a skill comes from
+
+The new identity format `<host>/<owner>/<repo>/<path-to-skill>` solves all these issues while enabling:
+- Zero-config team onboarding (registries in project config)
+- Multi-source skill management (GitHub, GitLab, Bitbucket, self-hosted)
+- Arbitrary nesting depth support
+- Collision-free skill identification
+
+**Note:** This is a breaking change. There are no existing users, so no migration is required.
 
 ## Glossary
 
@@ -54,29 +65,33 @@ This enhancement will allow skillops to handle arbitrary nesting depth in skill 
 4. THE System SHALL NOT require users to modify existing `.skillops/config.json` files
 5. WHEN displaying skill names in TUI interfaces, THE System SHALL show the short name for both 2-level and nested identities
 
-### Requirement 4: Detect Symlink Conflicts
+### Requirement 7: Detect and Resolve Symlink Conflicts
 
-**User Story:** As a developer, I want to be warned when two different skills would create the same symlink name, so that I can avoid conflicts and understand which skills are incompatible.
-
-#### Acceptance Criteria
-
-1. WHEN two skill identities have different full paths but the same short name (e.g., `repo-a/tools/logger` and `repo-b/utils/logger`), THE Conflict_Detector SHALL identify this as a symlink conflict
-2. WHEN a symlink conflict is detected during `add` or `sync`, THE System SHALL display a warning message indicating the conflicting skill identities
-3. WHEN a symlink conflict is detected, THE System SHALL skip creating the conflicting symlink and continue processing other skills
-4. THE Conflict_Detector SHALL check for conflicts before creating any symlinks
-5. WHEN a symlink already exists pointing to a different skill, THE System SHALL treat this as a conflict and skip the operation
-
-### Requirement 5: Update Sync Command
-
-**User Story:** As a developer, I want `skillops sync` to correctly restore symlinks for nested skill paths, so that my project setup is consistent across machines.
+**User Story:** As a developer, I want to be able to use multiple skills with the same short name by providing custom symlink names, so that I can work with skills from different sources without conflicts.
 
 #### Acceptance Criteria
 
-1. WHEN `skillops sync` processes a nested skill identity from local config, THE Sync_Command SHALL construct the correct global skill path using the full skill path
-2. WHEN `skillops sync` creates a symlink for a nested skill, THE Sync_Command SHALL use only the short name as the symlink filename
-3. WHEN a nested skill is not found in the global store, THE Sync_Command SHALL attempt to auto-pull from configured registries (existing behavior)
-4. WHEN `skillops sync` completes, THE Sync_Command SHALL report the number of symlinks created including both 2-level and nested skills
+1. WHEN two skill identities have different full paths but the same short name, THE Conflict_Detector SHALL identify this as a symlink conflict
+2. WHEN a conflict is detected during `add`, THE System SHALL launch an interactive TUI allowing the user to rename symlinks
+3. THE Conflict_Resolution_TUI SHALL display the full identity of each conflicting skill
+4. THE Conflict_Resolution_TUI SHALL allow users to provide custom symlink names for each conflicting skill
+5. WHEN a user provides a custom name, THE System SHALL validate it (no path separators, not empty, not "." or "..")
+6. THE System SHALL store the custom symlink name mapping in local config
+7. WHEN syncing with custom symlink names, THE System SHALL recreate symlinks using the custom names
+8. THE System SHALL prevent users from creating custom names that conflict with existing symlinks
+
+### Requirement 8: Update Sync Command for Full-Path Identities
+
+**User Story:** As a developer, I want `skillops sync` to correctly restore symlinks using full-path identities and registries, so that my project setup is consistent across machines.
+
+#### Acceptance Criteria
+
+1. WHEN `skillops sync` processes a full-path identity from local config, THE Sync_Command SHALL construct the correct global skill path
+2. WHEN a skill is not found in the global store, THE Sync_Command SHALL attempt to pull from configured registries
+3. WHEN no registry matches the skill identity, THE Sync_Command SHALL display an error and skip that skill
+4. WHEN `skillops sync` creates a symlink, THE Sync_Command SHALL use the short name or custom name from config
 5. THE Sync_Command SHALL maintain idempotent behavior (running twice produces the same result)
+6. WHEN sync completes, THE Sync_Command SHALL report: symlinks created, skills auto-pulled, and any errors
 
 ### Requirement 6: Update Remove Command
 
