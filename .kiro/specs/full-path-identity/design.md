@@ -110,10 +110,18 @@ type ParsedIdentity struct {
 }
 
 // Parse function
+// See Algorithm Specifications section for complete validation logic
 func ParseIdentity(identity string) (*ParsedIdentity, error) {
     parts := strings.Split(identity, "/")
     if len(parts) < 4 {
         return nil, fmt.Errorf("invalid identity: need at least host/owner/repo/skill")
+    }
+    
+    // Validate all components for path traversal (see algorithm spec)
+    for _, part := range parts {
+        if part == "" || part == "." || part == ".." {
+            return nil, fmt.Errorf("invalid identity: component cannot be empty, '.', or '..'")
+        }
     }
     
     pathInRepo := strings.Join(parts[3:], "/")
@@ -310,12 +318,12 @@ END FUNCTION
 ### 3. Symlink Creation Algorithm
 
 ```
-FUNCTION CreateSkillSymlink(identity: string, tool: string, localConfig: LocalConfig) -> error
+FUNCTION CreateSkillSymlink(identity: string, tool: string, localConfig: LocalConfig) -> (wasCreated: bool, error)
   INPUT:
     - identity: Full skill identity
     - tool: IDE name (e.g., "kiro")
     - localConfig: Project configuration
-  OUTPUT: Error if creation fails, nil on success
+  OUTPUT: wasCreated flag and error if creation fails
   
   STEPS:
     1. Parse identity
@@ -341,26 +349,26 @@ FUNCTION CreateSkillSymlink(identity: string, tool: string, localConfig: LocalCo
     
     4. Verify global skill exists
        IF NOT exists(globalPath + "/SKILL.md") THEN
-         RETURN error("skill not found in global store: " + identity)
+         RETURN false, error("skill not found in global store: " + identity)
        END IF
     
     5. Check for conflicts
        IF exists(symlinkPath) THEN
          existingTarget = readlink(symlinkPath)
          IF existingTarget != globalPath THEN
-           RETURN error("symlink conflict: " + symlinkName + " already exists")
+           RETURN false, error("symlink conflict: " + symlinkName + " already exists")
          ELSE
-           RETURN nil  // Already linked correctly (idempotent)
+           RETURN false, nil  // Already linked correctly (idempotent, not created)
          END IF
        END IF
     
     6. Create symlink
        err = os.Symlink(globalPath, symlinkPath)
        IF err != nil THEN
-         RETURN error("failed to create symlink: " + err)
+         RETURN false, error("failed to create symlink: " + err)
        END IF
     
-    7. RETURN nil
+    7. RETURN true, nil  // Successfully created
 END FUNCTION
 ```
 
@@ -466,12 +474,12 @@ FUNCTION SyncSkills(localConfig: LocalConfig) -> (created: int, autoPulled: int,
            
            // Check if skill exists
            IF exists(globalPath) THEN
-             // Create symlink
-             err = CreateSkillSymlink(identity, tool, localConfig)
-             IF err == nil THEN
-               created++
-             ELSE
+             // Create symlink (returns wasCreated bool)
+             wasCreated, err = CreateSkillSymlink(identity, tool, localConfig)
+             IF err != nil THEN
                errors = append(errors, err.Error())
+             ELSE IF wasCreated THEN
+               created++  // Only count if actually created (not idempotent no-op)
              END IF
            ELSE
              // Try to pull from registries
@@ -491,11 +499,11 @@ FUNCTION SyncSkills(localConfig: LocalConfig) -> (created: int, autoPulled: int,
              autoPulled++
              
              // Create symlink
-             err = CreateSkillSymlink(identity, tool, localConfig)
-             IF err == nil THEN
-               created++
-             ELSE
+             wasCreated, err = CreateSkillSymlink(identity, tool, localConfig)
+             IF err != nil THEN
                errors = append(errors, err.Error())
+             ELSE IF wasCreated THEN
+               created++
              END IF
            END IF
          END FOR
@@ -647,7 +655,7 @@ if !exists(globalPath) {
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 4. Discovery Changes
+### 5. Discovery Changes
 
 **File:** `internal/skills/skills.go`
 
@@ -675,7 +683,7 @@ filepath.WalkDir(config.SkillsDir, func(path string, d fs.DirEntry, err error) e
 })
 ```
 
-### 5. New Registry Matcher
+### 6. New Registry Matcher
 
 **File:** `internal/config/registry.go` (NEW)
 
@@ -686,7 +694,7 @@ filepath.WalkDir(config.SkillsDir, func(path string, d fs.DirEntry, err error) e
 - `MatchesRegistry(registry, host, owner) -> bool`
 - `BuildCloneURL(registry, repo) -> string`
 
-### 6. New Metadata Manager
+### 7. New Metadata Manager
 
 **File:** `internal/skills/metadata.go` (NEW)
 
@@ -799,10 +807,13 @@ filepath.WalkDir(config.SkillsDir, func(path string, d fs.DirEntry, err error) e
 
 **Design decision:** The system does not support 2-level identities (`repo/skill`). All identities must be full-path format (`host/owner/repo/skill`).
 
+**Config version handling:** If a config file has `"version": "1"` or no version field, the system SHALL fail with an error message: `"Config version 1 detected. This version requires config v2. Please run: skillops init"`
+
 **Rationale:**
 - Clean break from old design
 - Simpler implementation (no compatibility shims)
 - No technical debt from supporting legacy format
+- Clear error message guides users to resolution
 
 ## Performance Considerations
 
