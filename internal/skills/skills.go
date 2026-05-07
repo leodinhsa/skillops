@@ -10,6 +10,57 @@ import (
 	"skillops/internal/config"
 )
 
+// ParsedIdentity represents a parsed full-path skill identity
+// Format: <host>/<repo-path>/<path-to-skill>
+// Example: github.com/anthropics/skills/skills/skill-creator
+// Example: gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills/skills/logger
+//
+// Note: The boundary between repo-path and path-to-skill is NOT determined by parsing.
+// It is determined by registry URL prefix matching at runtime.
+type ParsedIdentity struct {
+	Full      string // Full identity: "github.com/anthropics/skills/skills/logger"
+	Host      string // Git host: "github.com"
+	Path      string // Everything after host: "anthropics/skills/skills/logger"
+	ShortName string // Final component for symlink: "logger"
+}
+
+// ParseIdentity parses a full-path skill identity into its components
+// Returns error if identity is invalid (< 3 components, path traversal, empty components)
+func ParseIdentity(identity string) (*ParsedIdentity, error) {
+	// Split identity on "/"
+	parts := strings.Split(identity, "/")
+
+	// Validate minimum components (host/something/skill)
+	if len(parts) < 3 {
+		return nil, fmt.Errorf("invalid identity '%s': need at least host/path/skill (minimum 3 components)", identity)
+	}
+
+	// Validate all components for path traversal and empty values
+	for i, part := range parts {
+		if part == "" {
+			return nil, fmt.Errorf("invalid identity '%s': component %d is empty", identity, i+1)
+		}
+		if part == "." {
+			return nil, fmt.Errorf("invalid identity '%s': component %d cannot be '.'", identity, i+1)
+		}
+		if part == ".." {
+			return nil, fmt.Errorf("invalid identity '%s': component %d cannot be '..' (path traversal attempt)", identity, i+1)
+		}
+	}
+
+	// Extract components
+	host := parts[0]
+	path := strings.Join(parts[1:], "/")
+	shortName := parts[len(parts)-1]
+
+	return &ParsedIdentity{
+		Full:      identity,
+		Host:      host,
+		Path:      path,
+		ShortName: shortName,
+	}, nil
+}
+
 type Skill struct {
 	Name     string // Display name: repo_name/skill_name
 	RepoName string

@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "tools": {
+    "antigravity": [
+      "skills/skills/skill-creator"
+    ],
+    "kiro": []
+  }
+}

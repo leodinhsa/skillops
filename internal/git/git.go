@@ -127,3 +127,79 @@ func NormalizeRepoURL(repoURL string) string {
 	// Convert user/repo to SSH format
 	return "git@github.com:" + repoURL + ".git"
 }
+
+// ParseRepoURL extracts host and repoPath from a git repository URL.
+// Supports HTTPS, SSH, and self-hosted formats including multi-level groups.
+// Strips .git suffix. Returns the identity prefix (host + "/" + repoPath).
+//
+// Examples:
+//   - "https://github.com/anthropics/skills.git" → host="github.com", repoPath="anthropics/skills"
+//   - "git@github.com:owner/repo.git" → host="github.com", repoPath="owner/repo"
+//   - "https://gitlab.com/group/subgroup/project" → host="gitlab.com", repoPath="group/subgroup/project"
+func ParseRepoURL(repoURL string) (host, repoPath string, err error) {
+	url := strings.TrimSpace(repoURL)
+	if url == "" {
+		return "", "", fmt.Errorf("repository URL cannot be empty")
+	}
+
+	// Strip .git suffix
+	url = strings.TrimSuffix(url, ".git")
+
+	// Detect URL format and extract host + repoPath
+	switch {
+	case strings.HasPrefix(url, "git@"):
+		// SSH format: git@github.com:owner/repo
+		url = strings.TrimPrefix(url, "git@")
+		parts := strings.SplitN(url, ":", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return "", "", fmt.Errorf("invalid SSH URL format: %s", repoURL)
+		}
+		host = parts[0]
+		repoPath = parts[1]
+
+	case strings.HasPrefix(url, "https://"):
+		url = strings.TrimPrefix(url, "https://")
+		parts := strings.SplitN(url, "/", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return "", "", fmt.Errorf("invalid HTTPS URL format: %s", repoURL)
+		}
+		host = parts[0]
+		repoPath = parts[1]
+
+	case strings.HasPrefix(url, "http://"):
+		url = strings.TrimPrefix(url, "http://")
+		parts := strings.SplitN(url, "/", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return "", "", fmt.Errorf("invalid HTTP URL format: %s", repoURL)
+		}
+		host = parts[0]
+		repoPath = parts[1]
+
+	default:
+		return "", "", fmt.Errorf("unsupported URL format (must be HTTPS or SSH): %s", repoURL)
+	}
+
+	// Strip trailing slash from repoPath
+	repoPath = strings.TrimSuffix(repoPath, "/")
+
+	// Validate repoPath has at least 2 components (owner/repo minimum)
+	pathComponents := strings.Split(repoPath, "/")
+	if len(pathComponents) < 2 {
+		return "", "", fmt.Errorf("URL must contain at least owner/repo after host: %s", repoURL)
+	}
+
+	// Validate all components for path traversal and empty values
+	for _, component := range pathComponents {
+		if component == "" {
+			return "", "", fmt.Errorf("invalid URL: path component cannot be empty: %s", repoURL)
+		}
+		if component == "." {
+			return "", "", fmt.Errorf("invalid URL: path component cannot be '.': %s", repoURL)
+		}
+		if component == ".." {
+			return "", "", fmt.Errorf("invalid URL: path component cannot be '..' (path traversal): %s", repoURL)
+		}
+	}
+
+	return host, repoPath, nil
+}

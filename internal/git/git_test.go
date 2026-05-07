@@ -1,6 +1,7 @@
 package git
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -92,6 +93,217 @@ func TestValidateURL(t *testing.T) {
 			err := validateURL(tt.input)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("validateURL(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseRepoURL_HTTPS(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        string
+		wantHost     string
+		wantRepoPath string
+	}{
+		{
+			name:         "GitHub HTTPS with .git",
+			input:        "https://github.com/anthropics/skills.git",
+			wantHost:     "github.com",
+			wantRepoPath: "anthropics/skills",
+		},
+		{
+			name:         "GitHub HTTPS without .git",
+			input:        "https://github.com/anthropics/skills",
+			wantHost:     "github.com",
+			wantRepoPath: "anthropics/skills",
+		},
+		{
+			name:         "GitLab multi-level groups",
+			input:        "https://gitlab.com/group/subgroup/project",
+			wantHost:     "gitlab.com",
+			wantRepoPath: "group/subgroup/project",
+		},
+		{
+			name:         "Self-hosted GitLab deep path",
+			input:        "https://gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills",
+			wantHost:     "gitlab.common.datumhq.com",
+			wantRepoPath: "datumhq-consulting-vn/management/datum-skills/software-skills",
+		},
+		{
+			name:         "HTTP URL",
+			input:        "http://github.com/user/repo.git",
+			wantHost:     "github.com",
+			wantRepoPath: "user/repo",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			host, repoPath, err := ParseRepoURL(tt.input)
+			if err != nil {
+				t.Fatalf("ParseRepoURL(%q) unexpected error: %v", tt.input, err)
+			}
+			if host != tt.wantHost {
+				t.Errorf("host = %q, want %q", host, tt.wantHost)
+			}
+			if repoPath != tt.wantRepoPath {
+				t.Errorf("repoPath = %q, want %q", repoPath, tt.wantRepoPath)
+			}
+		})
+	}
+}
+
+func TestParseRepoURL_SSH(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        string
+		wantHost     string
+		wantRepoPath string
+	}{
+		{
+			name:         "GitHub SSH with .git",
+			input:        "git@github.com:owner/repo.git",
+			wantHost:     "github.com",
+			wantRepoPath: "owner/repo",
+		},
+		{
+			name:         "GitHub SSH without .git",
+			input:        "git@github.com:owner/repo",
+			wantHost:     "github.com",
+			wantRepoPath: "owner/repo",
+		},
+		{
+			name:         "Bitbucket SSH",
+			input:        "git@bitbucket.org:org/repo.git",
+			wantHost:     "bitbucket.org",
+			wantRepoPath: "org/repo",
+		},
+		{
+			name:         "Self-hosted SSH",
+			input:        "git@gitlab.company.internal:team/backend/api-skills.git",
+			wantHost:     "gitlab.company.internal",
+			wantRepoPath: "team/backend/api-skills",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			host, repoPath, err := ParseRepoURL(tt.input)
+			if err != nil {
+				t.Fatalf("ParseRepoURL(%q) unexpected error: %v", tt.input, err)
+			}
+			if host != tt.wantHost {
+				t.Errorf("host = %q, want %q", host, tt.wantHost)
+			}
+			if repoPath != tt.wantRepoPath {
+				t.Errorf("repoPath = %q, want %q", repoPath, tt.wantRepoPath)
+			}
+		})
+	}
+}
+
+func TestParseRepoURL_Invalid(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{
+			name:    "empty string",
+			input:   "",
+			wantErr: "cannot be empty",
+		},
+		{
+			name:    "whitespace only",
+			input:   "   ",
+			wantErr: "cannot be empty",
+		},
+		{
+			name:    "unsupported protocol",
+			input:   "ftp://github.com/user/repo",
+			wantErr: "unsupported URL format",
+		},
+		{
+			name:    "no protocol",
+			input:   "github.com/user/repo",
+			wantErr: "unsupported URL format",
+		},
+		{
+			name:    "HTTPS missing path",
+			input:   "https://github.com",
+			wantErr: "invalid HTTPS URL format",
+		},
+		{
+			name:    "HTTPS only host with slash",
+			input:   "https://github.com/",
+			wantErr: "invalid HTTPS URL format",
+		},
+		{
+			name:    "HTTPS single path component",
+			input:   "https://github.com/onlyone",
+			wantErr: "at least owner/repo",
+		},
+		{
+			name:    "SSH missing colon path",
+			input:   "git@github.com",
+			wantErr: "invalid SSH URL format",
+		},
+		{
+			name:    "SSH empty path after colon",
+			input:   "git@github.com:",
+			wantErr: "invalid SSH URL format",
+		},
+		{
+			name:    "path traversal in components",
+			input:   "https://github.com/../etc/passwd",
+			wantErr: "cannot be '..'",
+		},
+		{
+			name:    "dot component",
+			input:   "https://github.com/./repo",
+			wantErr: "cannot be '.'",
+		},
+		{
+			name:    "empty component (double slash)",
+			input:   "https://github.com/owner//repo",
+			wantErr: "cannot be empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			host, repoPath, err := ParseRepoURL(tt.input)
+			if err == nil {
+				t.Fatalf("ParseRepoURL(%q) expected error, got host=%q repoPath=%q", tt.input, host, repoPath)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("ParseRepoURL(%q) error = %q, want to contain %q", tt.input, err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseRepoURL_IdentityPrefix(t *testing.T) {
+	// Verify that host + "/" + repoPath forms the correct identity prefix
+	tests := []struct {
+		input      string
+		wantPrefix string
+	}{
+		{"https://github.com/anthropics/skills.git", "github.com/anthropics/skills"},
+		{"git@github.com:company/utils.git", "github.com/company/utils"},
+		{"https://gitlab.com/group/subgroup/project", "gitlab.com/group/subgroup/project"},
+		{"git@bitbucket.org:org/repo", "bitbucket.org/org/repo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			host, repoPath, err := ParseRepoURL(tt.input)
+			if err != nil {
+				t.Fatalf("ParseRepoURL(%q) error: %v", tt.input, err)
+			}
+			prefix := host + "/" + repoPath
+			if prefix != tt.wantPrefix {
+				t.Errorf("identity prefix = %q, want %q", prefix, tt.wantPrefix)
 			}
 		})
 	}
