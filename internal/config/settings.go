@@ -8,12 +8,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Registry represents a remote skill registry.
-type Registry struct {
-	URL  string `yaml:"url"`
-	Name string `yaml:"name,omitempty"`
-}
-
 // Settings holds global user settings (registries, etc.).
 type Settings struct {
 	Registries []Registry `yaml:"registries"`

@@ -49,12 +49,12 @@ This document breaks down the implementation of full-path identity support into 
 - Return normalized identity prefix: `host + "/" + repoPath`
 
 **Acceptance:**
-- [ ] Parses HTTPS URLs correctly
-- [ ] Parses SSH URLs correctly
-- [ ] Handles multi-level groups (GitLab) — full path preserved
-- [ ] Strips `.git` suffix
-- [ ] Validates components
-- [ ] Returns identity prefix usable for registry matching
+- [x] Parses HTTPS URLs correctly
+- [x] Parses SSH URLs correctly
+- [x] Handles multi-level groups (GitLab) — full path preserved
+- [x] Strips `.git` suffix
+- [x] Validates components
+- [x] Returns identity prefix usable for registry matching
 
 **Tests:**
 - `https://github.com/anthropics/skills.git` → host=`github.com`, repoPath=`anthropics/skills`
@@ -77,10 +77,10 @@ This document breaks down the implementation of full-path identity support into 
 - Update `WriteLocalConfig` to always set version "2"
 
 **Acceptance:**
-- [ ] LocalConfig struct has all V2 fields
-- [ ] ReadLocalConfig fails on V1 config with clear error
-- [ ] WriteLocalConfig always sets version "2"
-- [ ] SymlinkNames is optional (omitempty)
+- [x] LocalConfig struct has all V2 fields
+- [x] ReadLocalConfig fails on V1 config with clear error
+- [x] WriteLocalConfig always sets version "2"
+- [x] SymlinkNames is optional (omitempty)
 
 **Tests:**
 - Read valid V2 config
