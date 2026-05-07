@@ -19,10 +19,10 @@ This document breaks down the implementation of full-path identity support into 
 - Implement validation: min 4 components, no empty/"."/"..` components
 
 **Acceptance:**
-- [ ] Struct defined with all fields
-- [ ] ParseIdentity validates component count
-- [ ] ParseIdentity validates all components for path traversal
-- [ ] Returns error for invalid identities
+- [x] Struct defined with all fields
+- [x] ParseIdentity validates component count
+- [x] ParseIdentity validates all components for path traversal
+- [x] Returns error for invalid identities
 
 **Tests:**
 - Valid 4-component identity

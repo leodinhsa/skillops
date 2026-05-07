@@ -180,3 +180,187 @@ func TestLoadMetadata_Missing(t *testing.T) {
 		t.Error("expected error for missing metadata.json, got nil")
 	}
 }
+
+// TestParseIdentity_ValidIdentities tests parsing of valid full-path identities
+func TestParseIdentity_ValidIdentities(t *testing.T) {
+	tests := []struct {
+		name          string
+		identity      string
+		wantHost      string
+		wantOwner     string
+		wantRepo      string
+		wantPathInRepo string
+		wantShortName string
+	}{
+		{
+			name:          "4 components (minimum)",
+			identity:      "github.com/anthropics/skills/logger",
+			wantHost:      "github.com",
+			wantOwner:     "anthropics",
+			wantRepo:      "skills",
+			wantPathInRepo: "logger",
+			wantShortName: "logger",
+		},
+		{
+			name:          "5 components (nested)",
+			identity:      "github.com/anthropics/skills/skills/logger",
+			wantHost:      "github.com",
+			wantOwner:     "anthropics",
+			wantRepo:      "skills",
+			wantPathInRepo: "skills/logger",
+			wantShortName: "logger",
+		},
+		{
+			name:          "deeply nested (7 components)",
+			identity:      "github.com/company/monorepo/backend/services/api/auth",
+			wantHost:      "github.com",
+			wantOwner:     "company",
+			wantRepo:      "monorepo",
+			wantPathInRepo: "backend/services/api/auth",
+			wantShortName: "auth",
+		},
+		{
+			name:          "multi-level owner (GitLab groups)",
+			identity:      "gitlab.com/group/subgroup/project/skills/logger",
+			wantHost:      "gitlab.com",
+			wantOwner:     "group",
+			wantRepo:      "subgroup",
+			wantPathInRepo: "project/skills/logger",
+			wantShortName: "logger",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := ParseIdentity(tt.identity)
+			if err != nil {
+				t.Fatalf("ParseIdentity(%q) unexpected error: %v", tt.identity, err)
+			}
+			if parsed.Full != tt.identity {
+				t.Errorf("Full = %q, want %q", parsed.Full, tt.identity)
+			}
+			if parsed.Host != tt.wantHost {
+				t.Errorf("Host = %q, want %q", parsed.Host, tt.wantHost)
+			}
+			if parsed.Owner != tt.wantOwner {
+				t.Errorf("Owner = %q, want %q", parsed.Owner, tt.wantOwner)
+			}
+			if parsed.Repo != tt.wantRepo {
+				t.Errorf("Repo = %q, want %q", parsed.Repo, tt.wantRepo)
+			}
+			if parsed.PathInRepo != tt.wantPathInRepo {
+				t.Errorf("PathInRepo = %q, want %q", parsed.PathInRepo, tt.wantPathInRepo)
+			}
+			if parsed.ShortName != tt.wantShortName {
+				t.Errorf("ShortName = %q, want %q", parsed.ShortName, tt.wantShortName)
+			}
+		})
+	}
+}
+
+// TestParseIdentity_InvalidComponentCount tests that identities with < 4 components are rejected
+func TestParseIdentity_InvalidComponentCount(t *testing.T) {
+	tests := []struct {
+		name     string
+		identity string
+	}{
+		{
+			name:     "0 components (empty string)",
+			identity: "",
+		},
+		{
+			name:     "1 component",
+			identity: "github.com",
+		},
+		{
+			name:     "2 components",
+			identity: "github.com/anthropics",
+		},
+		{
+			name:     "3 components",
+			identity: "github.com/anthropics/skills",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := ParseIdentity(tt.identity)
+			if err == nil {
+				t.Errorf("ParseIdentity(%q) expected error for < 4 components, got nil (parsed: %+v)", tt.identity, parsed)
+			}
+			if parsed != nil {
+				t.Errorf("ParseIdentity(%q) expected nil result on error, got %+v", tt.identity, parsed)
+			}
+			// Verify error message mentions component count
+			if err != nil && !contains(err.Error(), "minimum 4 components") {
+				t.Errorf("ParseIdentity(%q) error message should mention 'minimum 4 components', got: %v", tt.identity, err)
+			}
+		})
+	}
+}
+
+// TestParseIdentity_InvalidComponents tests that path traversal and empty components are rejected
+func TestParseIdentity_InvalidComponents(t *testing.T) {
+	tests := []struct {
+		name     string
+		identity string
+		wantErr  string
+	}{
+		{
+			name:     "empty component in middle",
+			identity: "github.com//skills/logger",
+			wantErr:  "empty",
+		},
+		{
+			name:     "dot component",
+			identity: "github.com/./skills/logger",
+			wantErr:  "cannot be '.'",
+		},
+		{
+			name:     "double-dot component (path traversal)",
+			identity: "github.com/../skills/logger",
+			wantErr:  "cannot be '..'",
+		},
+		{
+			name:     "double-dot in path",
+			identity: "github.com/anthropics/skills/../logger",
+			wantErr:  "cannot be '..'",
+		},
+		{
+			name:     "empty component at end",
+			identity: "github.com/anthropics/skills/",
+			wantErr:  "empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := ParseIdentity(tt.identity)
+			if err == nil {
+				t.Errorf("ParseIdentity(%q) expected error, got nil (parsed: %+v)", tt.identity, parsed)
+			}
+			if parsed != nil {
+				t.Errorf("ParseIdentity(%q) expected nil result on error, got %+v", tt.identity, parsed)
+			}
+			if err != nil && !contains(err.Error(), tt.wantErr) {
+				t.Errorf("ParseIdentity(%q) error should contain %q, got: %v", tt.identity, tt.wantErr, err)
+			}
+		})
+	}
+}
+
+// contains checks if a string contains a substring (case-sensitive)
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || 
+		(len(s) > 0 && len(substr) > 0 && indexOf(s, substr) >= 0))
+}
+
+// indexOf returns the index of substr in s, or -1 if not found
+func indexOf(s, substr string) int {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
+}

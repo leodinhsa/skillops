@@ -10,6 +10,64 @@ import (
 	"skillops/internal/config"
 )
 
+// ParsedIdentity represents a parsed full-path skill identity
+// Format: <host>/<owner>/<repo>/<path-to-skill>
+// Example: github.com/anthropics/skills/skills/skill-creator
+type ParsedIdentity struct {
+	Full       string // Full identity: "github.com/anthropics/skills/skills/logger"
+	Host       string // Git host: "github.com"
+	Owner      string // Owner/organization: "anthropics" (may contain "/" for multi-level groups)
+	Repo       string // Repository name: "skills"
+	PathInRepo string // Path from repo root to skill: "skills/logger"
+	ShortName  string // Final component for symlink: "logger"
+}
+
+// ParseIdentity parses a full-path skill identity into its components
+// Returns error if identity is invalid (< 4 components, path traversal, empty components)
+func ParseIdentity(identity string) (*ParsedIdentity, error) {
+	// Split identity on "/"
+	parts := strings.Split(identity, "/")
+
+	// Validate minimum components (host/owner/repo/skill)
+	if len(parts) < 4 {
+		return nil, fmt.Errorf("invalid identity '%s': need at least host/owner/repo/skill (minimum 4 components)", identity)
+	}
+
+	// Validate all components for path traversal and empty values
+	for i, part := range parts {
+		if part == "" {
+			return nil, fmt.Errorf("invalid identity '%s': component %d is empty", identity, i+1)
+		}
+		if part == "." {
+			return nil, fmt.Errorf("invalid identity '%s': component %d cannot be '.'", identity, i+1)
+		}
+		if part == ".." {
+			return nil, fmt.Errorf("invalid identity '%s': component %d cannot be '..' (path traversal attempt)", identity, i+1)
+		}
+	}
+
+	// Extract components
+	host := parts[0]
+	owner := parts[1]
+	repo := parts[2]
+	pathInRepo := strings.Join(parts[3:], "/")
+	shortName := filepath.Base(pathInRepo)
+
+	// Validate short name (should never be empty, ".", or ".." after filepath.Base)
+	if shortName == "" || shortName == "." || shortName == ".." {
+		return nil, fmt.Errorf("invalid identity '%s': skill path results in invalid short name", identity)
+	}
+
+	return &ParsedIdentity{
+		Full:       identity,
+		Host:       host,
+		Owner:      owner,
+		Repo:       repo,
+		PathInRepo: pathInRepo,
+		ShortName:  shortName,
+	}, nil
+}
+
 type Skill struct {
 	Name     string // Display name: repo_name/skill_name
 	RepoName string
