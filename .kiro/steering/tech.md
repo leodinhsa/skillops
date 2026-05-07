@@ -9,7 +9,7 @@
 - `github.com/charmbracelet/bubbletea` — TUI framework (Elm-style model/update/view)
 - `github.com/charmbracelet/lipgloss` — Terminal styling and layout
 - `github.com/charmbracelet/bubbles` — Reusable TUI components (lists, inputs, etc.)
-- `gopkg.in/yaml.v3` — Config file serialization
+- `gopkg.in/yaml.v3` — Config file serialization (global config only)
 
 ## Common Commands
 
@@ -22,6 +22,9 @@ go run main.go <command>
 
 # Run tests
 go test ./...
+
+# Run specific package tests
+go test ./internal/skills/...
 
 # Tidy dependencies
 go mod tidy
@@ -48,7 +51,151 @@ TUI models must have a `quitting bool` field. When quitting:
 
 This prevents ghost borders/artifacts in the terminal.
 
-## Config
-- Global config: `~/.skillops/config/agentics.yaml`
-- Skills directory: `~/.skillops/skills/`
-- Config is auto-initialized on every command via `PersistentPreRun` in root command
+### TTY Detection
+When TUI interactions are required (conflict resolution, disambiguation):
+- Check if running in TTY environment: `term.IsTerminal(int(os.Stdin.Fd()))`
+- **TTY**: Launch interactive TUI
+- **Non-TTY** (CI, SSH, piped): Fail with descriptive error listing conflicts and suggesting manual config.json edit
+- Never silently fail or make assumptions in non-TTY environments
+
+## Config Files
+
+### Global Config (`~/.skillops/config/agentics.yaml`)
+- Format: YAML
+- Purpose: Maps IDE names to their skill directory paths
+- Auto-initialized on every command via `PersistentPreRun` in root command
+- Versioned with `config_version` field for migration tracking
+
+### Local Config (`.skillops/config.json`)
+- Format: JSON (human-readable, indented)
+- Purpose: Project-specific skill configuration (source of truth)
+- **Version**: Must be "2" (v1 not supported)
+- **Commit to git**: Team members share this file
+- Contains: skill identities, registries, custom symlink names
+
+### Global Store (`~/.skillops/skills/`)
+- Organized by full path: `<host>/<owner>/<repo>/<path-to-skill>`
+- Contains pulled skill repositories and individual skills
+- Metadata files: `.so-skill-meta.json` (per skill), `.so-repo-meta.json` (per repo)
+
+## Skill Identity Format
+
+**Full-path format**: `<host>/<owner>/<repo>/<path-to-skill>`
+
+Examples:
+- `github.com/anthropics/skills/skills/logger`
+- `gitlab.com/devops-team/ci-helpers/docker-builder`
+- `github.com/company/monorepo/backend/services/api/skills/auth` (nested)
+
+**Components**:
+- **Host**: Git hosting platform (e.g., `github.com`, `gitlab.com`, `gitlab.company.internal`)
+- **Owner**: Organization or user (can be multi-level: `group/subgroup`)
+- **Repo**: Repository name
+- **Path in repo**: Path from repo root to skill folder
+- **Short name**: Final component used for symlink (e.g., `logger` from `skills/logger`)
+
+**Validation rules**:
+- Minimum 4 path components (host/owner/repo/skill)
+- No empty components
+- No "." or ".." components (path traversal prevention)
+- Always validate with `ParseIdentity` before filesystem operations
+
+## Data Structures
+
+### ParsedIdentity
+```go
+type ParsedIdentity struct {
+    Full        string   // github.com/anthropics/skills/skills/logger
+    Host        string   // github.com
+    Owner       string   // anthropics
+    Repo        string   // skills
+    PathInRepo  string   // skills/logger
+    ShortName   string   // logger
+}
+```
+
+### Registry
+```go
+type Registry struct {
+    URL      string   // https://github.com/anthropics (no trailing slash)
+    Name     string   // Anthropic Public Skills
+    Priority int      // Lower number = higher priority
+}
+```
+
+### SkillMetadata (`.so-skill-meta.json`)
+```json
+{
+  "repo_url": "https://github.com/anthropics/skills",
+  "path_in_repo": "skills/logger",
+  "pulled_at": "2026-05-06T10:30:00Z",
+  "commit_hash": "abc123def456"
+}
+```
+
+### RepoMetadata (`.so-repo-meta.json`)
+```json
+{
+  "repo_url": "https://github.com/anthropics/skills",
+  "pulled_at": "2026-05-06T10:30:00Z",
+  "commit_hash": "abc123def456"
+}
+```
+
+## Path Safety Rules
+
+**Critical**: Always validate paths before filesystem operations
+
+1. **Never** `os.RemoveAll` on root directories (`/`, `~`, cwd)
+2. **Always** validate paths are within `<cwd>/<toolRootDir>/skills/` before removal
+3. **Always** validate identity components (no empty, ".", "..", path traversal)
+4. **Always** use `utils.ValidateName` before constructing file paths
+5. **Always** use `ParseIdentity` for validation before any filesystem operations
+
+## Symlink Structure
+
+- **Global store**: Nested structure matching full path (`~/.skillops/skills/<host>/<owner>/<repo>/<path>`)
+- **Project symlinks**: Flat structure in IDE directories (`.kiro/skills/logger`)
+- **Symlink names**: Use short name (default) or custom name from `config.symlink_names`
+- **Conflict resolution**: When multiple skills have same short name, require custom names
+
+## Registry Matching
+
+- Use exact or prefix matching (not substring)
+- Sort by priority (lower number = higher priority)
+- Auto-populate registries when adding skills (read from skill metadata)
+- Sync uses registries to auto-pull missing skills
+- No fallback to metadata when registry matching fails (explicit error)
+
+## Error Handling Patterns
+
+### Descriptive Errors
+- Always include full skill identity in error messages
+- Suggest recovery actions (e.g., "add registry to config")
+- List all conflicts when multiple issues exist
+
+### Non-TTY Errors
+- Detect non-TTY environment before launching TUI
+- Provide actionable error messages with manual resolution steps
+- Show example config.json snippets for manual fixes
+
+### Validation Errors
+- Validate early (before filesystem operations)
+- Clear error messages for invalid identities
+- Prevent partial state (no partial symlinks or corrupted config)
+
+## Testing Conventions
+
+- Unit tests: `*_test.go` files alongside implementation
+- Test file naming: `<package>_test.go`
+- Integration tests: `cmd/*_test.go`
+- TUI testing: Manual testing (bubbletea models not easily unit-testable)
+- Test coverage: Focus on parsing, validation, and data flow logic
+
+## Development Workflow
+
+1. **Read spec first**: Check requirements.md and tasks.md before implementing
+2. **Validate inputs**: Use ParseIdentity and path validators before filesystem ops
+3. **Handle TTY/non-TTY**: Always check environment before launching TUI
+4. **Test edge cases**: Nested paths, multi-level groups, conflicts, missing metadata
+5. **Update docs**: Keep steering files and README in sync with implementation
