@@ -2,33 +2,45 @@
 
 ## Introduction
 
-This feature fundamentally redesigns skillops skill identity format to use full paths including host, owner, and repository information. The current 2-level `repo/skill` format causes critical issues:
+This feature fundamentally redesigns skillops skill identity format to use full paths including host and repository information. The current 2-level `repo/skill` format causes critical issues:
 
 1. **Repository collision**: Multiple organizations can have repositories with the same name (e.g., `company-a/common-utils` vs `company-b/common-utils`)
 2. **Nested path limitation**: Cannot represent skills in nested directory structures (e.g., `repo/backend/services/api/skills/auth`)
 3. **Team collaboration friction**: No mechanism to share registry URLs, requiring manual setup for each team member
 4. **Source ambiguity**: Cannot determine which git host (GitHub, GitLab, Bitbucket, self-hosted) a skill comes from
 
-The new identity format `<host>/<owner>/<repo>/<path-to-skill>` solves all these issues while enabling:
+The new identity format `<host>/<repo-path>/<path-to-skill>` solves all these issues while enabling:
 - Zero-config team onboarding (registries in project config)
 - Multi-source skill management (GitHub, GitLab, Bitbucket, self-hosted)
 - Arbitrary nesting depth support
 - Collision-free skill identification
+- Full support for multi-level groups (GitLab subgroups)
 
 **Note:** This is a breaking change. There are no existing users, so no migration or backward compatibility is required.
 
+## Key Design Decision: Registry-Based Repo Boundary Detection
+
+The identity string `<host>/<repo-path>/<path-to-skill>` does NOT encode where the repository ends and the skill path begins. This boundary is determined by **registry URL prefix matching** at runtime.
+
+**Rationale:** Git repository URLs can have arbitrary depth (e.g., `gitlab.com/group/subgroup/project`). The last component of the clone URL is always the repository name. Rather than trying to encode this boundary in the identity string (which would require a special separator), we use the registry URL to determine it.
+
+**Example:**
+- Registry URL: `https://gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills`
+- Identity: `gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills/skills/logger`
+- Match: identity starts with registry prefix → repo boundary known
+- Path in repo: `skills/logger` (remainder after stripping registry prefix from identity)
+
 ## Glossary
 
-- **Skill_Identity**: The full path identifier for a skill in the format `<host>/<owner>/<repo>/<path-to-skill>` (e.g., `github.com/anthropics/skills/skills/skill-creator`)
+- **Skill_Identity**: The full path identifier for a skill in the format `<host>/<repo-path>/<path-to-skill>` (e.g., `github.com/anthropics/skills/skills/skill-creator`). The boundary between repo-path and path-to-skill is determined by registry matching, not by parsing.
 - **Host**: The git hosting platform domain (e.g., `github.com`, `gitlab.com`, `bitbucket.org`, `gitlab.company.internal`)
-- **Owner**: The organization or user name on the git host (e.g., `anthropics`, `company-a`)
-- **Repo**: The repository name (e.g., `skills`, `common-utils`)
-- **Path_In_Repo**: The path from repository root to skill folder (e.g., `skills/skill-creator`, `backend/services/api/skills/auth`)
-- **Short_Name**: The final component of the path used as the symlink filename (e.g., `skill-creator` from `skills/skill-creator`)
-- **Global_Store**: The directory `~/.skillops/skills/` organized by `<host>/<owner>/<repo>/<path-to-skill>`
+- **Repo_Path**: The full path from host to repository, including any groups/subgroups and the repo name itself (e.g., `anthropics/skills`, `datumhq-consulting-vn/management/datum-skills/software-skills`)
+- **Path_In_Repo**: The path from repository root to skill folder (e.g., `skills/skill-creator`, `backend/services/api/skills/auth`). Determined by stripping the registry prefix from the identity.
+- **Short_Name**: The final component of the identity path used as the symlink filename (e.g., `skill-creator`, `logger`)
+- **Global_Store**: The directory `~/.skillops/skills/` organized by the full identity path
 - **Symlink_Path**: The path where a skill symlink is created in a project's IDE directory (e.g., `.kiro/skills/skill-creator`)
 - **Local_Config**: The `.skillops/config.json` file (version 2) that stores skill identities, registries, and custom symlink names per project
-- **Registry**: A base URL for pulling skills (e.g., `https://github.com/anthropics`). Must be owner-scoped without trailing slash.
+- **Registry**: A clone URL for a skill repository (e.g., `https://github.com/anthropics/skills`, `https://gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills`). Points to the exact repository. No trailing slash.
 - **Skill_Metadata**: Per-skill metadata file `.so-skill-meta.json` containing repo URL, path_in_repo, timestamp, and commit hash
 - **Repo_Metadata**: Per-repo metadata file `.so-repo-meta.json` for full repository pulls
 - **Custom_Symlink_Name**: User-provided symlink name to resolve conflicts when multiple skills have the same short name
@@ -37,16 +49,17 @@ The new identity format `<host>/<owner>/<repo>/<path-to-skill>` solves all these
 
 ### Requirement 1: Parse Full-Path Skill Identities
 
-**User Story:** As a developer, I want skillops to correctly parse skill identities with full path including host, owner, and repository, so that I can use skills from multiple sources without collision.
+**User Story:** As a developer, I want skillops to correctly parse skill identities with full path including host and repository path, so that I can use skills from multiple sources without collision.
 
 #### Acceptance Criteria
 
-1. WHEN a skill identity contains the format `<host>/<owner>/<repo>/<skill>`, THE Identity_Parser SHALL extract host, owner, repo, and path_in_repo components
-2. WHEN a skill identity contains nested paths (e.g., `github.com/company/monorepo/backend/services/api/skills/auth`), THE Identity_Parser SHALL correctly parse all components
+1. WHEN a skill identity is provided, THE Identity_Parser SHALL extract the host (first component) and the short name (final component)
+2. WHEN a skill identity contains nested paths (e.g., `gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills/skills/logger`), THE Identity_Parser SHALL correctly validate all components
 3. THE Identity_Parser SHALL extract the base name (final component) of the path as the short name for symlink creation
 4. WHEN parsing any valid skill identity, THE Identity_Parser SHALL produce a short name that contains no path separators
-5. THE Identity_Parser SHALL validate that the identity has at least 4 path components (host/owner/repo/skill minimum)
+5. THE Identity_Parser SHALL validate that the identity has at least 3 path components (host/repo-or-group/skill minimum)
 6. THE Identity_Parser SHALL validate that no component is empty, ".", or ".." to prevent path traversal attacks
+7. THE Identity_Parser SHALL NOT attempt to determine the boundary between repo-path and path-to-skill (this is determined by registry matching)
 
 ### Requirement 2: Prevent Repository Collision
 
@@ -71,7 +84,8 @@ The new identity format `<host>/<owner>/<repo>/<path-to-skill>` solves all these
 3. WHEN syncing a project, THE System SHALL use registries from local config to resolve and pull missing skills
 4. THE System SHALL support registries from multiple git hosts (GitHub, GitLab, Bitbucket, self-hosted)
 5. WHEN multiple registries are configured, THE System SHALL try them in priority order
-6. THE Registry.URL SHALL be owner-scoped (e.g., `https://github.com/anthropics`) without trailing slash
+6. THE Registry.URL SHALL be a full repository clone URL (e.g., `https://github.com/anthropics/skills`, `https://gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills`) without trailing slash
+7. THE System SHALL determine the path-to-skill by stripping the normalized registry URL prefix from the skill identity
 
 ### Requirement 4: Create Flat Symlinks Using Short Names
 
@@ -195,11 +209,12 @@ The new identity format `<host>/<owner>/<repo>/<path-to-skill>` solves all these
 
 #### Acceptance Criteria
 
-1. WHEN pulling a repository, THE Pull_Command SHALL extract host and owner from the repository URL
-2. THE Pull_Command SHALL create the global store path as `~/.skillops/skills/<host>/<owner>/<repo>`
+1. WHEN pulling a repository, THE Pull_Command SHALL extract host and repo-path from the repository URL
+2. THE Pull_Command SHALL create the global store path as `~/.skillops/skills/<host>/<repo-path>` (preserving the full URL path structure including any groups/subgroups)
 3. WHEN pulling a full repository, THE Pull_Command SHALL create `.so-repo-meta.json` at the repository root
 4. WHEN pulling a specific skill with `--skill` flag, THE Pull_Command SHALL create `.so-skill-meta.json` in the skill directory
 5. THE Pull_Command SHALL save `repo_url`, `path_in_repo`, `pulled_at`, and `commit_hash` in metadata
+6. THE Pull_Command SHALL support multi-level group URLs (e.g., `https://gitlab.com/group/subgroup/project`)
 
 ### Requirement 14: Update Update Command for Metadata-Based Updates
 
@@ -219,10 +234,10 @@ The new identity format `<host>/<owner>/<repo>/<path-to-skill>` solves all these
 
 #### Acceptance Criteria
 
-1. WHEN a skill identity has fewer than 4 path components, THE Path_Validator SHALL return a descriptive error message
+1. WHEN a skill identity has fewer than 3 path components, THE Path_Validator SHALL return a descriptive error message
 2. WHEN a skill identity contains invalid characters or path traversal attempts ("..", "."), THE Path_Validator SHALL reject the identity
 3. WHEN a global skill path does not exist, THE System SHALL provide a clear error indicating the missing skill
-4. THE Path_Validator SHALL validate that host, owner, repo, and path_in_repo components are not empty
+4. THE Path_Validator SHALL validate that all components are not empty
 5. WHEN validation fails, THE System SHALL NOT create partial symlinks or corrupt the local config
 
 ### Requirement 16: Support Local Config Schema V2
@@ -267,29 +282,34 @@ The new identity format `<host>/<owner>/<repo>/<path-to-skill>` solves all these
   "version": "2",
   "registries": [
     {
-      "url": "https://github.com/anthropics",
+      "url": "https://github.com/anthropics/skills",
       "name": "Anthropic Public Skills",
       "priority": 1
     },
     {
-      "url": "git@github.com:company-private",
+      "url": "git@github.com:company-private/enterprise-skills",
       "name": "Company Private Skills (SSH)",
       "priority": 2
     },
     {
-      "url": "https://gitlab.com/devops-team",
+      "url": "https://gitlab.com/devops-team/ci-helpers",
       "name": "DevOps Team",
       "priority": 3
     },
     {
-      "url": "https://gitlab.company.internal/backend",
+      "url": "https://gitlab.company.internal/backend/api-skills",
       "name": "Internal Backend Skills",
       "priority": 4
     },
     {
-      "url": "git@bitbucket.org:frontend-guild",
+      "url": "git@bitbucket.org:frontend-guild/react-skills",
       "name": "Frontend Guild",
       "priority": 5
+    },
+    {
+      "url": "https://gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills",
+      "name": "Datum Software Skills",
+      "priority": 6
     }
   ],
   "tools": {
@@ -297,7 +317,8 @@ The new identity format `<host>/<owner>/<repo>/<path-to-skill>` solves all these
       "github.com/anthropics/skills/skills/logger",
       "github.com/anthropics/skills/skills/auth",
       "github.com/company-private/enterprise-skills/api/rate-limiter",
-      "gitlab.com/devops-team/ci-helpers/docker-builder"
+      "gitlab.com/devops-team/ci-helpers/docker-builder",
+      "gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills/skills/code-review"
     ],
     "cursor": [
       "github.com/anthropics/skills/skills/logger",
@@ -320,87 +341,65 @@ The new identity format `<host>/<owner>/<repo>/<path-to-skill>` solves all these
 ~/.skillops/
 ├── config/
 │   ├── agentics.yaml              # Global IDE registry
-│   │   # {
-│   │   #   "config_version": 2,
-│   │   #   "agentics": {
-│   │   #     "kiro": ".kiro/skills",
-│   │   #     "cursor": ".cursor/skills",
-│   │   #     ...
-│   │   #   }
-│   │   # }
-│   │
 │   └── settings.yaml              # Global registries (optional, fallback)
-│       # {
-│       #   "registries": [
-│       #     {"url": "https://github.com/anthropics", "name": "Anthropic"}
-│       #   ]
-│       # }
 │
-└── skills/                        # Global store
+└── skills/                        # Global store (organized by full identity path)
     ├── github.com/
     │   ├── anthropics/
-    │   │   └── skills/
+    │   │   └── skills/                          # ← This is the repo root
     │   │       ├── .so-repo-meta.json           # Repo metadata (if full pull)
-    │   │       │   # {
-    │   │       │   #   "repo_url": "https://github.com/anthropics/skills",
-    │   │       │   #   "pulled_at": "2026-05-06T10:30:00Z",
-    │   │       │   #   "commit_hash": "abc123"
-    │   │       │   # }
-    │   │       │
-    │   │       ├── .git/                     # Git repo (if full pull)
+    │   │       ├── .git/                        # Git repo (if full pull)
     │   │       ├── README.md
-    │   │       │
-    │   │       └── skills/                   # Container folder
+    │   │       └── skills/                      # Container folder (path-in-repo starts here)
     │   │           ├── logger/
     │   │           │   ├── SKILL.md
-    │   │           │   ├── logger.py
-    │   │           │   └── .so-skill-meta.json    # Skill metadata
-    │   │           │       # {
-    │   │           │       #   "repo_url": "https://github.com/anthropics/skills",
-    │   │           │       #   "path_in_repo": "skills/logger",
-    │   │           │       #   "pulled_at": "2026-05-06T10:30:00Z",
-    │   │           │       #   "commit_hash": "abc123"
-    │   │           │       # }
-    │   │           │
+    │   │           │   └── .so-skill-meta.json
     │   │           ├── auth/
     │   │           │   ├── SKILL.md
     │   │           │   └── .so-skill-meta.json
-    │   │           │
     │   │           └── nested/
     │   │               └── advanced-logger/
     │   │                   ├── SKILL.md
     │   │                   └── .so-skill-meta.json
     │   │
     │   └── company-private/
-    │       └── enterprise-skills/
+    │       └── enterprise-skills/               # ← Repo root
     │           └── api/
     │               └── rate-limiter/
     │                   ├── SKILL.md
     │                   └── .so-skill-meta.json
     │
     ├── gitlab.com/
-    │   ├── devops-team/
-    │   │   └── ci-helpers/
-    │   │       └── docker-builder/
-    │   │           ├── SKILL.md
-    │   │           └── .so-skill-meta.json
-    │   │
-    │   └── company.internal/
-    │       └── backend/
-    │           └── api-skills/
-    │               └── database/
-    │                   └── migrations/
-    │                       ├── SKILL.md
-    │                       └── .so-skill-meta.json
+    │   └── devops-team/
+    │       └── ci-helpers/                      # ← Repo root
+    │           └── docker-builder/
+    │               ├── SKILL.md
+    │               └── .so-skill-meta.json
+    │
+    ├── gitlab.common.datumhq.com/
+    │   └── datumhq-consulting-vn/
+    │       └── management/
+    │           └── datum-skills/
+    │               └── software-skills/         # ← Repo root (multi-level groups)
+    │                   ├── .so-repo-meta.json
+    │                   └── skills/
+    │                       ├── code-review/
+    │                       │   ├── SKILL.md
+    │                       │   └── .so-skill-meta.json
+    │                       └── logger/
+    │                           ├── SKILL.md
+    │                           └── .so-skill-meta.json
     │
     └── bitbucket.org/
         └── frontend-guild/
-            └── react-skills/
+            └── react-skills/                    # ← Repo root
                 └── components/
                     └── form-handler/
                         ├── SKILL.md
                         └── .so-skill-meta.json
 ```
+
+**Note:** The "repo root" is determined by the registry URL. The filesystem structure mirrors the full identity path exactly. There is no special marker in the directory structure to indicate where the repo ends — this is resolved by registry matching at runtime.
 
 ## Appendix C: Project Structure with Symlinks
 

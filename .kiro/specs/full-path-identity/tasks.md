@@ -14,20 +14,22 @@ This document breaks down the implementation of full-path identity support into 
 **File:** `internal/skills/skills.go`
 **Requirements:** Req 1
 **Description:** 
-- Add `ParsedIdentity` struct with fields: `Full`, `Host`, `Owner`, `Repo`, `PathInRepo`, `ShortName`
+- Add `ParsedIdentity` struct with fields: `Full`, `Host`, `Path`, `ShortName`
 - Add `ParseIdentity(identity string) (*ParsedIdentity, error)` function
-- Implement validation: min 4 components, no empty/"."/"..` components
+- Implement validation: min 3 components, no empty/"."/"..` components
+- Note: No `Owner` or `Repo` fields — repo boundary is determined by registry URL prefix matching
 
 **Acceptance:**
-- [x] Struct defined with all fields
-- [x] ParseIdentity validates component count
+- [x] Struct defined with all fields (Full, Host, Path, ShortName)
+- [x] ParseIdentity validates component count (minimum 3)
 - [x] ParseIdentity validates all components for path traversal
 - [x] Returns error for invalid identities
 
 **Tests:**
-- Valid 4-component identity
-- Valid nested identity (5+ components)
-- Invalid: < 4 components
+- Valid 3-component identity (minimum)
+- Valid 4+ component identities
+- Valid multi-level groups (GitLab deep paths)
+- Invalid: < 3 components
 - Invalid: empty component
 - Invalid: ".." component
 - Invalid: "." component
@@ -39,25 +41,27 @@ This document breaks down the implementation of full-path identity support into 
 **Requirements:** Req 2, Req 13
 **Design:** Algorithm Specification section 8
 **Description:**
-- Add `ParseRepoURL(repoURL string) (host, owner, repo string, error)` function
+- Add `ParseRepoURL(repoURL string) (host, repoPath string, error)` function
 - Support HTTPS, SSH, self-hosted formats
-- Support multi-level groups (owner can contain "/")
+- Support multi-level groups (full path preserved as repoPath)
 - Strip `.git` suffix
 - Validate all components
+- Return normalized identity prefix: `host + "/" + repoPath`
 
 **Acceptance:**
 - [ ] Parses HTTPS URLs correctly
 - [ ] Parses SSH URLs correctly
-- [ ] Handles multi-level groups (GitLab)
+- [ ] Handles multi-level groups (GitLab) — full path preserved
 - [ ] Strips `.git` suffix
 - [ ] Validates components
+- [ ] Returns identity prefix usable for registry matching
 
 **Tests:**
-- `https://github.com/owner/repo.git`
-- `git@github.com:owner/repo.git`
-- `https://gitlab.com/group/subgroup/project`
-- `https://gitlab.company.internal/team/backend/api`
-- Invalid: missing owner/repo
+- `https://github.com/anthropics/skills.git` → host=`github.com`, repoPath=`anthropics/skills`
+- `git@github.com:owner/repo.git` → host=`github.com`, repoPath=`owner/repo`
+- `https://gitlab.com/group/subgroup/project` → host=`gitlab.com`, repoPath=`group/subgroup/project`
+- `https://gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills` → host=`gitlab.common.datumhq.com`, repoPath=`datumhq-consulting-vn/management/datum-skills/software-skills`
+- Invalid: missing path after host
 - Invalid: path traversal in components
 
 ---
@@ -205,24 +209,29 @@ This document breaks down the implementation of full-path identity support into 
 **Requirements:** Req 3, Req 8
 **Design:** Algorithm Specification section 2
 **Description:**
-- Implement `MatchRegistry(skillIdentity, registries) -> (cloneURL, error)`
-- Implement `MatchesRegistry(registry, host, owner) -> bool`
-- Use exact/prefix matching (not substring)
+- Implement `MatchRegistry(skillIdentity, registries) -> (cloneURL, pathInRepo, error)`
+- Implement `NormalizeRegistryURL(registryURL) -> identityPrefix`
+- Normalize: strip protocol (`https://`, `git@`), replace `:` with `/` for SSH, strip trailing `/`
+- Match: skill identity starts with normalized registry prefix
+- Path in repo = identity minus matched prefix (strip leading `/`)
 - Sort registries by priority
 
 **Acceptance:**
-- [ ] MatchRegistry finds correct registry
-- [ ] MatchesRegistry uses exact/prefix matching
+- [ ] MatchRegistry finds correct registry by prefix matching
+- [ ] NormalizeRegistryURL handles HTTPS and SSH formats
 - [ ] Respects priority order
 - [ ] Returns error when no match
+- [ ] Correctly extracts pathInRepo as remainder after prefix
+- [ ] Handles multi-level group URLs correctly
 
 **Tests:**
-- Match with single registry
+- Match with single registry (HTTPS)
+- Match with single registry (SSH)
 - Match with multiple registries (priority)
 - No match returns error
-- Exact match works
-- Prefix match works
-- Substring false positive prevented
+- Multi-level group URL matching
+- Path in repo correctly extracted
+- Substring false positive prevented (e.g., `github.com/anthropics/skills-extra` should NOT match registry `https://github.com/anthropics/skills`)
 
 ---
 

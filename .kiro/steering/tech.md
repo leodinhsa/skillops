@@ -74,28 +74,29 @@ When TUI interactions are required (conflict resolution, disambiguation):
 - Contains: skill identities, registries, custom symlink names
 
 ### Global Store (`~/.skillops/skills/`)
-- Organized by full path: `<host>/<owner>/<repo>/<path-to-skill>`
+- Organized by full identity path: `<host>/<full-path-to-skill>`
 - Contains pulled skill repositories and individual skills
 - Metadata files: `.so-skill-meta.json` (per skill), `.so-repo-meta.json` (per repo)
+- Repo boundary is NOT encoded in filesystem — determined by registry matching
 
 ## Skill Identity Format
 
-**Full-path format**: `<host>/<owner>/<repo>/<path-to-skill>`
+**Full-path format**: `<host>/<repo-path>/<path-to-skill>`
 
 Examples:
 - `github.com/anthropics/skills/skills/logger`
 - `gitlab.com/devops-team/ci-helpers/docker-builder`
 - `github.com/company/monorepo/backend/services/api/skills/auth` (nested)
+- `gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills/skills/logger` (multi-level groups)
+
+**Key design decision**: The identity does NOT encode where the repo ends and path-to-skill begins. This boundary is determined by **registry URL prefix matching**.
 
 **Components**:
 - **Host**: Git hosting platform (e.g., `github.com`, `gitlab.com`, `gitlab.company.internal`)
-- **Owner**: Organization or user (can be multi-level: `group/subgroup`)
-- **Repo**: Repository name
-- **Path in repo**: Path from repo root to skill folder
-- **Short name**: Final component used for symlink (e.g., `logger` from `skills/logger`)
+- **Short name**: Final component used for symlink (e.g., `logger`)
 
 **Validation rules**:
-- Minimum 4 path components (host/owner/repo/skill)
+- Minimum 3 path components (host/something/skill)
 - No empty components
 - No "." or ".." components (path traversal prevention)
 - Always validate with `ParseIdentity` before filesystem operations
@@ -105,19 +106,19 @@ Examples:
 ### ParsedIdentity
 ```go
 type ParsedIdentity struct {
-    Full        string   // github.com/anthropics/skills/skills/logger
-    Host        string   // github.com
-    Owner       string   // anthropics
-    Repo        string   // skills
-    PathInRepo  string   // skills/logger
-    ShortName   string   // logger
+    Full        string   // gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills/skills/logger
+    Host        string   // gitlab.common.datumhq.com
+    Path        string   // datumhq-consulting-vn/management/datum-skills/software-skills/skills/logger (everything after host)
+    ShortName   string   // logger (final component, used for symlink)
 }
 ```
+
+**Note**: There is no `Owner` or `Repo` field. The boundary between repo-path and path-to-skill is determined by registry matching at runtime, not by parsing.
 
 ### Registry
 ```go
 type Registry struct {
-    URL      string   // https://github.com/anthropics (no trailing slash)
+    URL      string   // https://github.com/anthropics/skills (full repo clone URL, no trailing slash)
     Name     string   // Anthropic Public Skills
     Priority int      // Lower number = higher priority
 }
@@ -154,14 +155,17 @@ type Registry struct {
 
 ## Symlink Structure
 
-- **Global store**: Nested structure matching full path (`~/.skillops/skills/<host>/<owner>/<repo>/<path>`)
+- **Global store**: Nested structure matching full identity path (`~/.skillops/skills/<host>/<full-path>`)
 - **Project symlinks**: Flat structure in IDE directories (`.kiro/skills/logger`)
 - **Symlink names**: Use short name (default) or custom name from `config.symlink_names`
 - **Conflict resolution**: When multiple skills have same short name, require custom names
 
 ## Registry Matching
 
-- Use exact or prefix matching (not substring)
+- Registry URL is a full repo clone URL (e.g., `https://github.com/anthropics/skills`)
+- Normalize URL: strip protocol (`https://`, `git@`), replace `:` with `/` for SSH → get prefix
+- Match: skill identity starts with normalized registry prefix
+- Path in repo = identity minus matched prefix (strip leading `/`)
 - Sort by priority (lower number = higher priority)
 - Auto-populate registries when adding skills (read from skill metadata)
 - Sync uses registries to auto-pull missing skills

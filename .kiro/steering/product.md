@@ -36,7 +36,7 @@ Project-specific configuration (commit to git):
   "version": "2",
   "registries": [
     {
-      "url": "https://github.com/anthropics",
+      "url": "https://github.com/anthropics/skills",
       "name": "Anthropic Public Skills",
       "priority": 1
     }
@@ -58,29 +58,33 @@ Project-specific configuration (commit to git):
 ## Key Concepts
 
 ### Skill Identity
-Full-path format: `<host>/<owner>/<repo>/<path-to-skill>`
+Full-path format: `<host>/<repo-path>/<path-to-skill>`
 
 Examples:
 - `github.com/anthropics/skills/skills/logger`
 - `gitlab.com/devops-team/ci-helpers/docker-builder`
 - `github.com/company/monorepo/backend/services/api/skills/auth` (nested)
+- `gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills/skills/logger` (multi-level groups)
 
 **Critical**: A directory is only a valid skill if it contains `SKILL.md`.
 
+**Key design decision**: The identity string does NOT encode where the repository ends and the skill path begins. This boundary is determined by **registry URL prefix matching** at runtime.
+
 ### Skill Components
 - **Host**: Git hosting platform (e.g., `github.com`, `gitlab.com`, `gitlab.company.internal`)
-- **Owner**: Organization or user (can be multi-level: `group/subgroup`)
-- **Repo**: Repository name
-- **Path in repo**: Path from repo root to skill folder
-- **Short name**: Final component used for symlink (e.g., `logger` from `skills/logger`)
+- **Short name**: Final component used for symlink (e.g., `logger` from the identity path)
+
+**Note**: There is no separate "owner" or "repo" field in the parsed identity. The full path between host and short name is stored as-is. The repo boundary is determined by registry matching when clone operations are needed.
 
 ### Registry
-A base URL for pulling skills (owner-scoped, no trailing slash):
-- `https://github.com/anthropics`
-- `git@github.com:company-private`
-- `https://gitlab.company.internal/backend`
+A full repository clone URL (no trailing slash):
+- `https://github.com/anthropics/skills`
+- `git@github.com:company-private/enterprise-skills`
+- `https://gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills`
 
 Registries enable zero-config team onboarding. When a teammate clones the project and runs `skillops sync`, missing skills are auto-pulled from configured registries.
+
+**Registry matching**: The normalized registry URL (protocol stripped) is compared as a prefix against the skill identity. The remainder after the prefix is the `path-to-skill` within the repository.
 
 ### Symlink Names
 - **Default**: Short name (final path component)
@@ -114,16 +118,18 @@ Project symlinks (derived state, flat structure)
 `.skillops/config.json` (v2) is the source of truth. Symlinks are derived state that can be recreated via `skillops sync`.
 
 ### Skill Identity Format
-- **Internal**: Always use full-path format `<host>/<owner>/<repo>/<path-to-skill>`
+- **Internal**: Always use full-path format `<host>/<repo-path>/<path-to-skill>`
 - **Symlinks**: Use short name (final component) or custom name from config
-- **Minimum**: 4 path components (host/owner/repo/skill)
+- **Minimum**: 3 path components (host/something/skill)
 - **Validation**: No empty components, no "." or "..", no path traversal
+- **Repo boundary**: Determined by registry URL prefix matching, NOT by parsing the identity string
 
 ### Global Store Structure
-- Organized by full path: `~/.skillops/skills/<host>/<owner>/<repo>/<path-to-skill>`
-- Supports multi-level owners (e.g., `gitlab.com/group/subgroup/project`)
-- Prevents repository collision (different owners can have same repo name)
+- Organized by full identity path: `~/.skillops/skills/<host>/<repo-path>/<path-to-skill>`
+- Supports multi-level groups (e.g., `gitlab.com/group/subgroup/project`)
+- Prevents repository collision (different paths = different directories)
 - Supports arbitrary nesting depth
+- Repo boundary is NOT encoded in filesystem — determined by registry matching
 
 ### Symlink Structure
 - **Flat**: IDE skill directories remain flat (no nested folders)
@@ -144,7 +150,10 @@ When multiple skills have the same short name:
 - Never silently overwrite
 
 ### Registry Matching
-- Use exact or prefix matching (not substring)
+- Registry URL is a full repo clone URL (e.g., `https://github.com/anthropics/skills`)
+- Normalize URL (strip protocol, replace `:` with `/` for SSH) to get prefix
+- Match: identity starts with normalized registry prefix
+- Path in repo = identity minus the matched prefix
 - Sort by priority (lower number = higher priority)
 - Auto-populate registries when adding skills (read from skill metadata)
 - Sync uses registries to auto-pull missing skills

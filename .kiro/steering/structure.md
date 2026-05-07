@@ -53,9 +53,10 @@ skillops/
 - Each `cmd/` file registers itself via `init()` calling `rootCmd.AddCommand(...)`
 - Commands are grouped with `GroupID`: `"project"` or `"skill"`
 - All shared TUI styles live in `internal/tui/styles.go` — never define one-off styles in command files
-- **Skill identity format**: `<host>/<owner>/<repo>/<path-to-skill>` (e.g., `github.com/anthropics/skills/skills/logger`)
-- **Short name**: Final component of path used for symlink (e.g., `logger` from `skills/logger`)
+- **Skill identity format**: `<host>/<repo-path>/<path-to-skill>` (e.g., `github.com/anthropics/skills/skills/logger`)
+- **Short name**: Final component of identity path used for symlink (e.g., `logger`)
 - **Custom symlink names**: Stored in `config.symlink_names` to resolve conflicts
+- **Repo boundary**: Determined by registry URL prefix matching, NOT by parsing the identity string
 - A skill is valid only if it contains a `SKILL.md` file
 - Path safety: always validate identities with `ParseIdentity` before constructing file paths; never `os.RemoveAll` on root or cwd
 - Destructive/bulk actions require a confirmation TUI step before execution
@@ -68,39 +69,51 @@ skillops/
 │   ├── agentics.yaml              # Global IDE registry (name → relative path)
 │   └── settings.yaml              # Global registries (fallback, optional)
 │
-└── skills/                        # Global store (organized by full path)
+└── skills/                        # Global store (organized by full identity path)
     ├── github.com/
     │   ├── anthropics/
-    │   │   └── skills/
-    │   │       ├── .so-repo-meta.json           # Repo metadata (if full pull)
-    │   │       ├── .git/                        # Git repo (if full pull)
+    │   │   └── skills/                          # ← Repo root
+    │   │       ├── .so-repo-meta.json
+    │   │       ├── .git/
     │   │       └── skills/
     │   │           ├── logger/
     │   │           │   ├── SKILL.md
-    │   │           │   └── .so-skill-meta.json  # Skill metadata
+    │   │           │   └── .so-skill-meta.json
     │   │           └── auth/
     │   │               ├── SKILL.md
     │   │               └── .so-skill-meta.json
     │   └── company-private/
-    │       └── enterprise-skills/
+    │       └── enterprise-skills/               # ← Repo root
     │           └── api/
     │               └── rate-limiter/
     │                   ├── SKILL.md
     │                   └── .so-skill-meta.json
     ├── gitlab.com/
     │   └── devops-team/
-    │       └── ci-helpers/
+    │       └── ci-helpers/                      # ← Repo root
     │           └── docker-builder/
     │               ├── SKILL.md
     │               └── .so-skill-meta.json
+    ├── gitlab.common.datumhq.com/
+    │   └── datumhq-consulting-vn/
+    │       └── management/
+    │           └── datum-skills/
+    │               └── software-skills/         # ← Repo root (multi-level groups)
+    │                   ├── .so-repo-meta.json
+    │                   └── skills/
+    │                       └── logger/
+    │                           ├── SKILL.md
+    │                           └── .so-skill-meta.json
     └── bitbucket.org/
         └── frontend-guild/
-            └── react-skills/
+            └── react-skills/                    # ← Repo root
                 └── components/
                     └── form-handler/
                         ├── SKILL.md
                         └── .so-skill-meta.json
 ```
+
+**Note:** Repo root is determined by registry URL, not by filesystem markers.
 
 ## Local Config Schema (V2)
 
@@ -109,12 +122,12 @@ skillops/
   "version": "2",
   "registries": [
     {
-      "url": "https://github.com/anthropics",
+      "url": "https://github.com/anthropics/skills",
       "name": "Anthropic Public Skills",
       "priority": 1
     },
     {
-      "url": "git@github.com:company-private",
+      "url": "git@github.com:company-private/enterprise-skills",
       "name": "Company Private Skills",
       "priority": 2
     }
@@ -137,6 +150,7 @@ skillops/
 ```
 
 **Critical**: Config v1 is NOT supported. Version must be "2".
+**Registry URL**: Points to the exact repository (not owner-scoped). This enables unambiguous prefix matching.
 
 ## Project Symlink Structure
 
@@ -163,19 +177,19 @@ my-project/
 ### ParsedIdentity
 ```go
 type ParsedIdentity struct {
-    Full        string   // github.com/anthropics/skills/skills/logger
-    Host        string   // github.com
-    Owner       string   // anthropics
-    Repo        string   // skills
-    PathInRepo  string   // skills/logger
-    ShortName   string   // logger
+    Full        string   // gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills/skills/logger
+    Host        string   // gitlab.common.datumhq.com
+    Path        string   // datumhq-consulting-vn/management/datum-skills/software-skills/skills/logger
+    ShortName   string   // logger (final component, used for symlink)
 }
 ```
+
+**Note**: No `Owner` or `Repo` field. Repo boundary is determined by registry matching.
 
 ### Registry
 ```go
 type Registry struct {
-    URL      string   // https://github.com/anthropics (no trailing slash)
+    URL      string   // https://github.com/anthropics/skills (full repo clone URL, no trailing slash)
     Name     string   // Anthropic Public Skills
     Priority int      // Lower number = higher priority
 }
@@ -203,9 +217,9 @@ type Registry struct {
 ## Data Flow
 
 ```
-Global store (~/.skillops/skills/<host>/<owner>/<repo>/<path>)
+Global store (~/.skillops/skills/<host>/<full-path-to-skill>)
   └── populated by: skillops pull
-  └── organized by: full-path structure
+  └── organized by: full identity path structure
   └── contains: .so-skill-meta.json or .so-repo-meta.json
 
 Local config (.skillops/config.json v2)        ← source of truth
@@ -229,14 +243,17 @@ When multiple skills have the same short name:
 
 ## Registry Matching
 
-- Use exact or prefix matching (not substring)
+- Registry URL is a full repo clone URL (e.g., `https://github.com/anthropics/skills`)
+- Normalize URL: strip protocol, replace `:` with `/` for SSH → get prefix
+- Match: skill identity starts with normalized registry prefix
+- Path in repo = identity minus matched prefix
 - Sort by priority (lower number = higher priority)
 - Auto-populate registries when adding skills (read from skill metadata)
 - Sync uses registries to auto-pull missing skills
 
 ## Path Validation
 
-- Minimum 4 path components (host/owner/repo/skill)
+- Minimum 3 path components (host/something/skill)
 - No empty components, no "." or "..", no path traversal
 - Use `ParseIdentity` for validation before any filesystem operations
 - Never `os.RemoveAll` on root directories (`/`, `~`, cwd)
