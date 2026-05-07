@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"skillops/internal/config"
@@ -187,46 +188,50 @@ func TestParseIdentity_ValidIdentities(t *testing.T) {
 		name          string
 		identity      string
 		wantHost      string
-		wantOwner     string
-		wantRepo      string
-		wantPathInRepo string
+		wantPath      string
 		wantShortName string
 	}{
 		{
-			name:          "4 components (minimum)",
+			name:          "3 components (minimum)",
+			identity:      "github.com/anthropics/logger",
+			wantHost:      "github.com",
+			wantPath:      "anthropics/logger",
+			wantShortName: "logger",
+		},
+		{
+			name:          "4 components",
 			identity:      "github.com/anthropics/skills/logger",
 			wantHost:      "github.com",
-			wantOwner:     "anthropics",
-			wantRepo:      "skills",
-			wantPathInRepo: "logger",
+			wantPath:      "anthropics/skills/logger",
 			wantShortName: "logger",
 		},
 		{
 			name:          "5 components (nested)",
 			identity:      "github.com/anthropics/skills/skills/logger",
 			wantHost:      "github.com",
-			wantOwner:     "anthropics",
-			wantRepo:      "skills",
-			wantPathInRepo: "skills/logger",
+			wantPath:      "anthropics/skills/skills/logger",
 			wantShortName: "logger",
 		},
 		{
 			name:          "deeply nested (7 components)",
 			identity:      "github.com/company/monorepo/backend/services/api/auth",
 			wantHost:      "github.com",
-			wantOwner:     "company",
-			wantRepo:      "monorepo",
-			wantPathInRepo: "backend/services/api/auth",
+			wantPath:      "company/monorepo/backend/services/api/auth",
 			wantShortName: "auth",
 		},
 		{
-			name:          "multi-level owner (GitLab groups)",
-			identity:      "gitlab.com/group/subgroup/project/skills/logger",
-			wantHost:      "gitlab.com",
-			wantOwner:     "group",
-			wantRepo:      "subgroup",
-			wantPathInRepo: "project/skills/logger",
+			name:          "multi-level groups (GitLab)",
+			identity:      "gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills/skills/logger",
+			wantHost:      "gitlab.common.datumhq.com",
+			wantPath:      "datumhq-consulting-vn/management/datum-skills/software-skills/skills/logger",
 			wantShortName: "logger",
+		},
+		{
+			name:          "self-hosted GitLab",
+			identity:      "gitlab.company.internal/team/backend/api-skills/database/migrations",
+			wantHost:      "gitlab.company.internal",
+			wantPath:      "team/backend/api-skills/database/migrations",
+			wantShortName: "migrations",
 		},
 	}
 
@@ -242,14 +247,8 @@ func TestParseIdentity_ValidIdentities(t *testing.T) {
 			if parsed.Host != tt.wantHost {
 				t.Errorf("Host = %q, want %q", parsed.Host, tt.wantHost)
 			}
-			if parsed.Owner != tt.wantOwner {
-				t.Errorf("Owner = %q, want %q", parsed.Owner, tt.wantOwner)
-			}
-			if parsed.Repo != tt.wantRepo {
-				t.Errorf("Repo = %q, want %q", parsed.Repo, tt.wantRepo)
-			}
-			if parsed.PathInRepo != tt.wantPathInRepo {
-				t.Errorf("PathInRepo = %q, want %q", parsed.PathInRepo, tt.wantPathInRepo)
+			if parsed.Path != tt.wantPath {
+				t.Errorf("Path = %q, want %q", parsed.Path, tt.wantPath)
 			}
 			if parsed.ShortName != tt.wantShortName {
 				t.Errorf("ShortName = %q, want %q", parsed.ShortName, tt.wantShortName)
@@ -258,7 +257,7 @@ func TestParseIdentity_ValidIdentities(t *testing.T) {
 	}
 }
 
-// TestParseIdentity_InvalidComponentCount tests that identities with < 4 components are rejected
+// TestParseIdentity_InvalidComponentCount tests that identities with < 3 components are rejected
 func TestParseIdentity_InvalidComponentCount(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -276,24 +275,20 @@ func TestParseIdentity_InvalidComponentCount(t *testing.T) {
 			name:     "2 components",
 			identity: "github.com/anthropics",
 		},
-		{
-			name:     "3 components",
-			identity: "github.com/anthropics/skills",
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			parsed, err := ParseIdentity(tt.identity)
 			if err == nil {
-				t.Errorf("ParseIdentity(%q) expected error for < 4 components, got nil (parsed: %+v)", tt.identity, parsed)
+				t.Errorf("ParseIdentity(%q) expected error for < 3 components, got nil (parsed: %+v)", tt.identity, parsed)
 			}
 			if parsed != nil {
 				t.Errorf("ParseIdentity(%q) expected nil result on error, got %+v", tt.identity, parsed)
 			}
 			// Verify error message mentions component count
-			if err != nil && !contains(err.Error(), "minimum 4 components") {
-				t.Errorf("ParseIdentity(%q) error message should mention 'minimum 4 components', got: %v", tt.identity, err)
+			if err != nil && !contains(err.Error(), "minimum 3 components") {
+				t.Errorf("ParseIdentity(%q) error message should mention 'minimum 3 components', got: %v", tt.identity, err)
 			}
 		})
 	}
@@ -327,8 +322,13 @@ func TestParseIdentity_InvalidComponents(t *testing.T) {
 			wantErr:  "cannot be '..'",
 		},
 		{
-			name:     "empty component at end",
+			name:     "empty component at end (trailing slash)",
 			identity: "github.com/anthropics/skills/",
+			wantErr:  "empty",
+		},
+		{
+			name:     "empty host",
+			identity: "/anthropics/skills/logger",
 			wantErr:  "empty",
 		},
 	}
@@ -351,16 +351,5 @@ func TestParseIdentity_InvalidComponents(t *testing.T) {
 
 // contains checks if a string contains a substring (case-sensitive)
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || 
-		(len(s) > 0 && len(substr) > 0 && indexOf(s, substr) >= 0))
-}
-
-// indexOf returns the index of substr in s, or -1 if not found
-func indexOf(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
+	return strings.Contains(s, substr)
 }

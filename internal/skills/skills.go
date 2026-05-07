@@ -11,26 +11,28 @@ import (
 )
 
 // ParsedIdentity represents a parsed full-path skill identity
-// Format: <host>/<owner>/<repo>/<path-to-skill>
+// Format: <host>/<repo-path>/<path-to-skill>
 // Example: github.com/anthropics/skills/skills/skill-creator
+// Example: gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills/skills/logger
+//
+// Note: The boundary between repo-path and path-to-skill is NOT determined by parsing.
+// It is determined by registry URL prefix matching at runtime.
 type ParsedIdentity struct {
-	Full       string // Full identity: "github.com/anthropics/skills/skills/logger"
-	Host       string // Git host: "github.com"
-	Owner      string // Owner/organization: "anthropics" (may contain "/" for multi-level groups)
-	Repo       string // Repository name: "skills"
-	PathInRepo string // Path from repo root to skill: "skills/logger"
-	ShortName  string // Final component for symlink: "logger"
+	Full      string // Full identity: "github.com/anthropics/skills/skills/logger"
+	Host      string // Git host: "github.com"
+	Path      string // Everything after host: "anthropics/skills/skills/logger"
+	ShortName string // Final component for symlink: "logger"
 }
 
 // ParseIdentity parses a full-path skill identity into its components
-// Returns error if identity is invalid (< 4 components, path traversal, empty components)
+// Returns error if identity is invalid (< 3 components, path traversal, empty components)
 func ParseIdentity(identity string) (*ParsedIdentity, error) {
 	// Split identity on "/"
 	parts := strings.Split(identity, "/")
 
-	// Validate minimum components (host/owner/repo/skill)
-	if len(parts) < 4 {
-		return nil, fmt.Errorf("invalid identity '%s': need at least host/owner/repo/skill (minimum 4 components)", identity)
+	// Validate minimum components (host/something/skill)
+	if len(parts) < 3 {
+		return nil, fmt.Errorf("invalid identity '%s': need at least host/path/skill (minimum 3 components)", identity)
 	}
 
 	// Validate all components for path traversal and empty values
@@ -48,23 +50,14 @@ func ParseIdentity(identity string) (*ParsedIdentity, error) {
 
 	// Extract components
 	host := parts[0]
-	owner := parts[1]
-	repo := parts[2]
-	pathInRepo := strings.Join(parts[3:], "/")
-	shortName := filepath.Base(pathInRepo)
-
-	// Validate short name (should never be empty, ".", or ".." after filepath.Base)
-	if shortName == "" || shortName == "." || shortName == ".." {
-		return nil, fmt.Errorf("invalid identity '%s': skill path results in invalid short name", identity)
-	}
+	path := strings.Join(parts[1:], "/")
+	shortName := parts[len(parts)-1]
 
 	return &ParsedIdentity{
-		Full:       identity,
-		Host:       host,
-		Owner:      owner,
-		Repo:       repo,
-		PathInRepo: pathInRepo,
-		ShortName:  shortName,
+		Full:      identity,
+		Host:      host,
+		Path:      path,
+		ShortName: shortName,
 	}, nil
 }
 
