@@ -2,20 +2,22 @@
 
 ## Overview
 
-This design fundamentally redesigns skillops to use full-path skill identities in the format `<host>/<owner>/<repo>/<path-to-skill>`, replacing the current 2-level `repo/skill` format. This change solves critical issues:
+This design fundamentally redesigns skillops to use full-path skill identities in the format `<host>/<repo-path>/<path-to-skill>`, replacing the current 2-level `repo/skill` format. This change solves critical issues:
 
 1. **Repository collision prevention**: Skills from `github.com/company-a/utils` and `github.com/company-b/utils` can coexist
 2. **Arbitrary nesting support**: Skills can be located at any depth (e.g., `github.com/company/monorepo/backend/services/api/skills/auth`)
 3. **Multi-source management**: Support for GitHub, GitLab, Bitbucket, and self-hosted git platforms
 4. **Zero-config team collaboration**: Project config includes registries, enabling automatic skill resolution
+5. **Multi-level group support**: GitLab subgroups of any depth are fully supported (e.g., `gitlab.com/group/subgroup/project/skills/auth`)
 
 ### Key Design Principles
 
 1. **Full-path identities**: Every skill is identified by its complete path from host to skill folder
-2. **Flat symlinks**: Symlinks always use short names (final path component) to keep IDE directories organized
-3. **Conflict resolution**: When multiple skills have the same short name, users provide custom symlink names via TUI
-4. **Self-contained config**: Project `.skillops/config.json` includes registries for team collaboration
-5. **Per-skill metadata**: Each skill has `.so-skill-meta.json` for traceability and updates
+2. **Registry-based repo boundary**: The boundary between repo-path and path-to-skill is determined by registry URL prefix matching, NOT by parsing the identity string
+3. **Flat symlinks**: Symlinks always use short names (final path component) to keep IDE directories organized
+4. **Conflict resolution**: When multiple skills have the same short name, users provide custom symlink names via TUI
+5. **Self-contained config**: Project `.skillops/config.json` includes registries for team collaboration
+6. **Per-skill metadata**: Each skill has `.so-skill-meta.json` for traceability and updates
 
 ## Architecture
 
@@ -28,15 +30,21 @@ This design fundamentally redesigns skillops to use full-path skill identities i
 
 Input: "github.com/anthropics/skills/skills/skill-creator"
    │
-   ├─> Identity Parser
+   ├─> Identity Parser (ParseIdentity)
    │   ├─> Host: "github.com"
-   │   ├─> Owner: "anthropics"
-   │   ├─> Repo: "skills"
-   │   ├─> Path in repo: "skills/skill-creator"
-   │   └─> Short Name: "skill-creator" (filepath.Base)
+   │   ├─> Path: "anthropics/skills/skills/skill-creator"
+   │   └─> Short Name: "skill-creator" (final component)
    │
    ├─> Global Store Path Construction
    │   └─> ~/.skillops/skills/github.com/anthropics/skills/skills/skill-creator
+   │       (mirrors the full identity path exactly)
+   │
+   ├─> Registry Matching (when clone needed)
+   │   ├─> Registry URL: "https://github.com/anthropics/skills"
+   │   ├─> Normalized prefix: "github.com/anthropics/skills"
+   │   ├─> Identity starts with prefix → MATCH
+   │   ├─> Clone URL: "https://github.com/anthropics/skills"
+   │   └─> Path in repo: "skills/skill-creator" (remainder after prefix)
    │
    ├─> Symlink Path Construction
    │   └─> <project>/.kiro/skills/skill-creator
@@ -55,7 +63,7 @@ Input: "github.com/anthropics/skills/skills/skill-creator"
 
 ┌─────────────────┐
 │  CLI Commands   │  (cmd/*.go)
-│  - pull.go      │  Organizes by host/owner/repo
+│  - pull.go      │  Organizes by full identity path
 │  - sync.go      │  Uses registries + metadata
 │  - update.go    │  Reads metadata for source
 │  - add.go       │  Auto-populates registries
@@ -96,25 +104,24 @@ Input: "github.com/anthropics/skills/skills/skill-creator"
 ### Skill Identity Structure
 
 ```go
-// Full identity format: <host>/<owner>/<repo>/<path-to-skill>
+// Full identity format: <host>/<repo-path>/<path-to-skill>
+// The boundary between repo-path and path-to-skill is determined by registry matching.
 type SkillIdentity string
 
 // Parsed components
 type ParsedIdentity struct {
-    Full       string  // "github.com/anthropics/skills/skills/logger"
-    Host       string  // "github.com"
-    Owner      string  // "anthropics"
-    Repo       string  // "skills"
-    PathInRepo string  // "skills/logger"
-    ShortName  string  // "logger" (filepath.Base of PathInRepo)
+    Full      string  // "github.com/anthropics/skills/skills/logger"
+    Host      string  // "github.com"
+    Path      string  // "anthropics/skills/skills/logger" (everything after host)
+    ShortName string  // "logger" (final component, used for symlink)
 }
 
 // Parse function
 // See Algorithm Specifications section for complete validation logic
 func ParseIdentity(identity string) (*ParsedIdentity, error) {
     parts := strings.Split(identity, "/")
-    if len(parts) < 4 {
-        return nil, fmt.Errorf("invalid identity: need at least host/owner/repo/skill")
+    if len(parts) < 3 {
+        return nil, fmt.Errorf("invalid identity: need at least host/path/skill (minimum 3 components)")
     }
     
     // Validate all components for path traversal (see algorithm spec)
@@ -124,18 +131,16 @@ func ParseIdentity(identity string) (*ParsedIdentity, error) {
         }
     }
     
-    pathInRepo := strings.Join(parts[3:], "/")
-    
     return &ParsedIdentity{
-        Full:       identity,
-        Host:       parts[0],
-        Owner:      parts[1],
-        Repo:       parts[2],
-        PathInRepo: pathInRepo,
-        ShortName:  filepath.Base(pathInRepo),
+        Full:      identity,
+        Host:      parts[0],
+        Path:      strings.Join(parts[1:], "/"),
+        ShortName: parts[len(parts)-1],
     }, nil
 }
 ```
+
+**Note:** There is no `Owner`, `Repo`, or `PathInRepo` field. The repo boundary is determined by registry URL prefix matching at runtime (see Algorithm 2).
 
 ### Local Config Schema V2
 
@@ -148,7 +153,7 @@ type LocalConfig struct {
 }
 
 type Registry struct {
-    URL      string `json:"url"`
+    URL      string `json:"url"`      // Full repo clone URL (no trailing slash)
     Name     string `json:"name"`
     Priority int    `json:"priority"`
 }
@@ -160,15 +165,21 @@ type Registry struct {
   "version": "2",
   "registries": [
     {
-      "url": "https://github.com/anthropics",
+      "url": "https://github.com/anthropics/skills",
       "name": "Anthropic Skills",
       "priority": 1
+    },
+    {
+      "url": "https://gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills",
+      "name": "Datum Software Skills",
+      "priority": 2
     }
   ],
   "tools": {
     "kiro": [
       "github.com/anthropics/skills/skills/logger",
-      "github.com/company-a/utils/tools/logger"
+      "github.com/company-a/utils/tools/logger",
+      "gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills/skills/code-review"
     ]
   },
   "symlink_names": {
@@ -178,6 +189,7 @@ type Registry struct {
 ```
 
 **Note:** `symlink_names` only contains custom names (conflicts). If not present, use short name.
+**Registry URL:** Points to the exact repository (not owner-scoped). This enables unambiguous prefix matching.
 
 ### Skill Metadata Schema
 
@@ -223,13 +235,16 @@ FUNCTION ParseSkillIdentity(identity: string) -> (ParsedIdentity, error)
   INPUT: Full skill identity (e.g., "github.com/anthropics/skills/skills/logger")
   OUTPUT: Parsed components or error
   
+  NOTE: This function does NOT determine the repo boundary.
+        That is handled by registry matching (Algorithm 2).
+  
   STEPS:
     1. Split identity on "/"
        parts = strings.Split(identity, "/")
     
     2. Validate minimum components
-       IF len(parts) < 4 THEN
-         RETURN error("invalid identity: need at least host/owner/repo/skill")
+       IF len(parts) < 3 THEN
+         RETURN error("invalid identity: need at least host/path/skill (minimum 3 components)")
        END IF
     
     3. Validate all components for path traversal
@@ -241,22 +256,13 @@ FUNCTION ParseSkillIdentity(identity: string) -> (ParsedIdentity, error)
     
     4. Extract components
        host = parts[0]
-       owner = parts[1]
-       repo = parts[2]
-       pathInRepo = strings.Join(parts[3:], "/")
-       shortName = filepath.Base(pathInRepo)
+       path = strings.Join(parts[1:], "/")
+       shortName = parts[len(parts)-1]
     
-    5. Validate short name
-       IF shortName == "" OR shortName == "." OR shortName == ".." THEN
-         RETURN error("invalid skill path")
-       END IF
-    
-    6. RETURN ParsedIdentity{
+    5. RETURN ParsedIdentity{
          Full: identity,
          Host: host,
-         Owner: owner,
-         Repo: repo,
-         PathInRepo: pathInRepo,
+         Path: path,
          ShortName: shortName,
        }
 END FUNCTION
@@ -265,55 +271,70 @@ END FUNCTION
 ### 2. Registry Matching Algorithm
 
 ```
-FUNCTION MatchRegistry(skillIdentity: string, registries: []Registry) -> (string, error)
+FUNCTION MatchRegistry(skillIdentity: string, registries: []Registry) -> (cloneURL: string, pathInRepo: string, error)
   INPUT: 
     - skillIdentity: Full skill identity
     - registries: List of configured registries
-  OUTPUT: Clone URL or error
+  OUTPUT: Clone URL, path within repo, or error
+  
+  PURPOSE: Determine which registry (repo) a skill belongs to by prefix matching.
+           The registry URL normalized form is compared as a prefix against the identity.
+           The remainder after the prefix is the path-to-skill within the repository.
   
   STEPS:
-    1. Parse skill identity
-       parsed = ParseSkillIdentity(skillIdentity)
-    
-    2. Sort registries by priority
+    1. Sort registries by priority
        sortedRegs = SortByPriority(registries)
     
-    3. Try each registry
+    2. Try each registry
        FOR EACH reg IN sortedRegs DO
-         IF MatchesRegistry(reg, parsed.Host, parsed.Owner) THEN
-           cloneURL = reg.URL + "/" + parsed.Repo
-           RETURN cloneURL, nil
+         normalized = NormalizeRegistryURL(reg.URL)
+         
+         // Check if identity starts with normalized prefix followed by "/"
+         IF strings.HasPrefix(skillIdentity, normalized + "/") THEN
+           pathInRepo = strings.TrimPrefix(skillIdentity, normalized + "/")
+           RETURN reg.URL, pathInRepo, nil
          END IF
        END FOR
     
-    4. No match found
-       RETURN "", error("no registry found for " + parsed.Host + "/" + parsed.Owner)
+    3. No match found
+       RETURN "", "", error("no registry found for skill: " + skillIdentity)
 END FUNCTION
 
-FUNCTION MatchesRegistry(reg: Registry, host: string, owner: string) -> bool
+FUNCTION NormalizeRegistryURL(registryURL: string) -> string
+  PURPOSE: Convert a registry URL to the format used in skill identities
+           (strip protocol, normalize SSH format)
+  
   STEPS:
-    1. Normalize registry URL
-       normalized = NormalizeURL(reg.URL)
-       // Remove protocol (https://, git@), replace : with /
-       // Example: "git@github.com:anthropics" -> "github.com/anthropics"
-    
-    2. Build expected path
-       expectedPath = host + "/" + owner
-    
-    3. Check exact match or prefix match
-       // Exact match: registry is exactly host/owner
-       IF normalized == expectedPath THEN
-         RETURN true
-       END IF
+    1. Strip protocol
+       url = strings.TrimSuffix(registryURL, ".git")
        
-       // Prefix match: registry is host/owner/... (more specific)
-       IF strings.HasPrefix(normalized, expectedPath + "/") THEN
-         RETURN true
+       IF strings.HasPrefix(url, "https://") THEN
+         url = strings.TrimPrefix(url, "https://")
+       ELSE IF strings.HasPrefix(url, "http://") THEN
+         url = strings.TrimPrefix(url, "http://")
+       ELSE IF strings.HasPrefix(url, "git@") THEN
+         // SSH format: git@github.com:owner/repo → github.com/owner/repo
+         url = strings.TrimPrefix(url, "git@")
+         url = strings.Replace(url, ":", "/", 1)
        END IF
-       
-       RETURN false
+    
+    2. Strip trailing slash
+       url = strings.TrimSuffix(url, "/")
+    
+    3. RETURN url
 END FUNCTION
 ```
+
+**Examples:**
+
+| Registry URL | Normalized | Identity | Match? | Path in Repo |
+|---|---|---|---|---|
+| `https://github.com/anthropics/skills` | `github.com/anthropics/skills` | `github.com/anthropics/skills/skills/logger` | ✅ | `skills/logger` |
+| `git@github.com:company/utils` | `github.com/company/utils` | `github.com/company/utils/tools/logger` | ✅ | `tools/logger` |
+| `https://gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills` | `gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills` | `gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills/skills/logger` | ✅ | `skills/logger` |
+| `https://github.com/anthropics/skills` | `github.com/anthropics/skills` | `github.com/anthropics/skills-extra/logger` | ❌ | — |
+
+**Critical:** The match requires the prefix followed by `/` to prevent false positives (e.g., `skills` should not match `skills-extra`).
 
 ### 3. Symlink Creation Algorithm
 
@@ -332,17 +353,12 @@ FUNCTION CreateSkillSymlink(identity: string, tool: string, localConfig: LocalCo
     2. Determine symlink name
        symlinkName = localConfig.SymlinkNames[identity]
        IF symlinkName == "" THEN
-         symlinkName = parsed.ShortName  // Use default
+         symlinkName = parsed.ShortName  // Use default (final component)
        END IF
     
     3. Construct paths
-       globalPath = filepath.Join(
-         config.SkillsDir,
-         parsed.Host,
-         parsed.Owner,
-         parsed.Repo,
-         parsed.PathInRepo,
-       )
+       // Global path mirrors the full identity
+       globalPath = filepath.Join(config.SkillsDir, filepath.FromSlash(identity))
        
        toolDir = GetToolSkillsDir(tool)  // e.g., .kiro/skills
        symlinkPath = filepath.Join(toolDir, symlinkName)
@@ -463,14 +479,8 @@ FUNCTION SyncSkills(localConfig: LocalConfig) -> (created: int, autoPulled: int,
              CONTINUE
            END IF
            
-           // Construct global path
-           globalPath = filepath.Join(
-             config.SkillsDir,
-             parsed.Host,
-             parsed.Owner,
-             parsed.Repo,
-             parsed.PathInRepo,
-           )
+           // Construct global path (mirrors full identity)
+           globalPath = filepath.Join(config.SkillsDir, filepath.FromSlash(identity))
            
            // Check if skill exists
            IF exists(globalPath) THEN
@@ -483,14 +493,14 @@ FUNCTION SyncSkills(localConfig: LocalConfig) -> (created: int, autoPulled: int,
              END IF
            ELSE
              // Try to pull from registries
-             cloneURL, err = MatchRegistry(identity, localConfig.Registries)
+             cloneURL, pathInRepo, err = MatchRegistry(identity, localConfig.Registries)
              IF err != nil THEN
                errors = append(errors, "no registry for " + identity)
                CONTINUE
              END IF
              
              // Pull skill
-             err = PullSkillFromURL(cloneURL, parsed.PathInRepo, globalPath)
+             err = PullSkillFromURL(cloneURL, pathInRepo, globalPath)
              IF err != nil THEN
                errors = append(errors, "failed to pull " + identity + ": " + err)
                CONTINUE
@@ -641,15 +651,20 @@ END FUNCTION
 ### 8. Parse Repository URL Algorithm
 
 ```
-FUNCTION ParseRepoURL(repoURL: string) -> (host: string, owner: string, repo: string, error)
+FUNCTION ParseRepoURL(repoURL: string) -> (host: string, repoPath: string, error)
   INPUT: Git repository URL in various formats
-  OUTPUT: Extracted host, owner (may contain /), and repo name
+  OUTPUT: Extracted host and repoPath (full path after host, used as identity prefix)
   
-  PURPOSE: Extract host, owner, and repo from git URLs supporting:
+  PURPOSE: Extract host and repoPath from git URLs supporting:
            - HTTPS: https://github.com/owner/repo.git
            - SSH: git@github.com:owner/repo.git
            - Self-hosted: https://gitlab.company.internal/group/subgroup/repo
-           - Multi-level groups (GitLab): owner can contain "/"
+           - Multi-level groups (GitLab): any depth of nesting
+  
+  NOTE: The repoPath is the full path from host to repo (including groups).
+        Combined with host, it forms the identity prefix for skills in this repo.
+        Example: host="gitlab.com", repoPath="group/subgroup/project"
+        → identity prefix: "gitlab.com/group/subgroup/project"
   
   STEPS:
     1. Normalize URL
@@ -665,7 +680,7 @@ FUNCTION ParseRepoURL(repoURL: string) -> (host: string, owner: string, repo: st
            RETURN error("invalid SSH URL format")
          END IF
          host = parts[0]
-         pathPart = parts[1]
+         repoPath = parts[1]
        ELSE IF strings.HasPrefix(url, "https://") OR strings.HasPrefix(url, "http://") THEN
          // HTTPS format: https://github.com/owner/repo
          url = strings.TrimPrefix(url, "https://")
@@ -675,59 +690,43 @@ FUNCTION ParseRepoURL(repoURL: string) -> (host: string, owner: string, repo: st
            RETURN error("invalid HTTPS URL format")
          END IF
          host = parts[0]
-         pathPart = parts[1]
+         repoPath = parts[1]
        ELSE
          RETURN error("unsupported URL format (must be HTTPS or SSH)")
        END IF
     
-    3. Extract owner and repo from path
-       // pathPart examples:
-       // - "anthropics/skills" → owner="anthropics", repo="skills"
-       // - "group/subgroup/project" → owner="group/subgroup", repo="project"
-       
-       pathComponents = strings.Split(pathPart, "/")
-       IF len(pathComponents) < 2 THEN
-         RETURN error("URL must contain at least owner/repo")
-       END IF
-       
-       // Repo is always the last component
-       repo = pathComponents[len(pathComponents)-1]
-       
-       // Owner is everything before repo (supports multi-level groups)
-       owner = strings.Join(pathComponents[0:len(pathComponents)-1], "/")
-    
-    4. Validate components
-       IF host == "" OR owner == "" OR repo == "" THEN
+    3. Validate components
+       IF host == "" OR repoPath == "" THEN
          RETURN error("invalid URL: empty component")
        END IF
        
        // Validate no path traversal in components
-       allComponents = append(strings.Split(owner, "/"), repo)
-       FOR EACH component IN allComponents DO
+       pathComponents = strings.Split(repoPath, "/")
+       IF len(pathComponents) < 2 THEN
+         RETURN error("URL must contain at least owner/repo")
+       END IF
+       
+       FOR EACH component IN pathComponents DO
          IF component == "" OR component == "." OR component == ".." THEN
            RETURN error("invalid URL: component cannot be empty, '.', or '..'")
          END IF
        END FOR
     
-    5. RETURN host, owner, repo, nil
+    4. RETURN host, repoPath, nil
 END FUNCTION
 ```
 
 **Examples:**
 
-| Input URL | Host | Owner | Repo |
-|-----------|------|-------|------|
-| `https://github.com/anthropics/skills.git` | `github.com` | `anthropics` | `skills` |
-| `git@github.com:company/utils.git` | `github.com` | `company` | `utils` |
-| `https://gitlab.com/group/subgroup/project` | `gitlab.com` | `group/subgroup` | `project` |
-| `https://gitlab.company.internal/team/backend/api` | `gitlab.company.internal` | `team/backend` | `api` |
-| `git@bitbucket.org:org/repo` | `bitbucket.org` | `org` | `repo` |
+| Input URL | Host | RepoPath | Identity Prefix |
+|-----------|------|----------|-----------------|
+| `https://github.com/anthropics/skills.git` | `github.com` | `anthropics/skills` | `github.com/anthropics/skills` |
+| `git@github.com:company/utils.git` | `github.com` | `company/utils` | `github.com/company/utils` |
+| `https://gitlab.com/group/subgroup/project` | `gitlab.com` | `group/subgroup/project` | `gitlab.com/group/subgroup/project` |
+| `https://gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills` | `gitlab.common.datumhq.com` | `datumhq-consulting-vn/management/datum-skills/software-skills` | `gitlab.common.datumhq.com/datumhq-consulting-vn/management/datum-skills/software-skills` |
+| `git@bitbucket.org:org/repo` | `bitbucket.org` | `org/repo` | `bitbucket.org/org/repo` |
 
-**Multi-level group support:**
-- Owner can contain "/" for GitLab nested groups
-- Global store path: `~/.skillops/skills/<host>/<owner>/<repo>/`
-- Example: `~/.skillops/skills/gitlab.com/group/subgroup/project/`
-- Identity: `gitlab.com/group/subgroup/project/skills/auth`
+**Key insight:** The identity prefix (`host + "/" + repoPath`) is exactly what `NormalizeRegistryURL` produces from the registry URL. This is how registry matching works — the normalized registry URL IS the identity prefix for all skills in that repo.
 
 ## Component Specifications
 
@@ -736,19 +735,18 @@ END FUNCTION
 **File:** `cmd/pull.go`
 
 **Changes:**
-- Extract host and owner from repository URL using `git.ParseRepoURL`
-- Create directory structure: `~/.skillops/skills/<host>/<owner>/<repo>`
+- Extract host and repoPath from repository URL using `git.ParseRepoURL`
+- Create directory structure: `~/.skillops/skills/<host>/<repoPath>`
 - Save `.so-repo-meta.json` for full pulls
 - Use `PullSkillFromURL` for specific skill pulls with `--skill` flag
 
 **Key logic:**
 ```go
-// Extract host/owner/repo from URL
-// Supports multi-level groups (e.g., GitLab group/subgroup/project)
-host, owner, repo := git.ParseRepoURL(url)
+// Extract host/repoPath from URL
+host, repoPath := git.ParseRepoURL(url)
 
-// Create nested directory
-dest := filepath.Join(config.SkillsDir, host, owner, repo)
+// Create nested directory (mirrors identity prefix)
+dest := filepath.Join(config.SkillsDir, host, repoPath)
 
 // For --skill flag, use PullSkillFromURL
 if skillFlag != "" {
@@ -770,7 +768,7 @@ SaveRepoMetadata(dest, RepoMetadata{...})
 
 **Changes:**
 - Parse full-path identities
-- Use registry matching for missing skills
+- Use registry matching for missing skills (returns cloneURL + pathInRepo)
 - Support custom symlink names from config
 - Error (not fallback) when no registry matches
 
@@ -785,13 +783,16 @@ if symlinkName == "" {
     symlinkName = parsed.ShortName
 }
 
+// Global path mirrors the full identity
+globalPath := filepath.Join(config.SkillsDir, filepath.FromSlash(identity))
+
 // Try registry matching if skill missing
 if !exists(globalPath) {
-    cloneURL, err := MatchRegistry(identity, localConfig.Registries)
+    cloneURL, pathInRepo, err := MatchRegistry(identity, localConfig.Registries)
     if err != nil {
         return fmt.Errorf("no registry found for %s", identity)
     }
-    PullSkillFromURL(cloneURL, parsed.PathInRepo, globalPath)
+    PullSkillFromURL(cloneURL, pathInRepo, globalPath)
 }
 ```
 
@@ -847,9 +848,9 @@ if !exists(globalPath) {
 
 **Changes:**
 - Walk global store starting from `~/.skillops/skills/`
-- Construct full-path identities from filesystem paths
-- Extract host, owner, repo from directory structure
+- Construct full-path identities from filesystem paths (relative path from skills dir)
 - Skip hidden directories (starting with ".")
+- No need to extract host/owner/repo separately — the relative path IS the identity
 
 **Key logic:**
 ```go
@@ -866,7 +867,7 @@ filepath.WalkDir(config.SkillsDir, func(path string, d fs.DirEntry, err error) e
     
     // Check for SKILL.md
     if d.IsDir() && exists(filepath.Join(path, "SKILL.md")) {
-        // Found a skill
+        // Found a skill — relative path from skills dir IS the identity
         relPath, _ := filepath.Rel(config.SkillsDir, path)
         identity := filepath.ToSlash(relPath)
         // identity = "github.com/anthropics/skills/skills/logger"
@@ -890,12 +891,13 @@ filepath.WalkDir(config.SkillsDir, func(path string, d fs.DirEntry, err error) e
 
 **File:** `internal/config/registry.go` (NEW)
 
-**Purpose:** Match skill identities to registries
+**Purpose:** Match skill identities to registries using prefix matching
 
 **Key functions:**
-- `MatchRegistry(identity, registries) -> cloneURL`
-- `MatchesRegistry(registry, host, owner) -> bool`
-- `BuildCloneURL(registry, repo) -> string`
+- `MatchRegistry(identity, registries) -> (cloneURL, pathInRepo, error)`
+- `NormalizeRegistryURL(registryURL) -> identityPrefix`
+
+**Design:** Registry URL is a full repo clone URL. When normalized (protocol stripped), it becomes the identity prefix for all skills in that repo. Matching is done by checking if the skill identity starts with the normalized prefix followed by "/".
 
 ### 7. New Metadata Manager
 
@@ -913,13 +915,13 @@ filepath.WalkDir(config.SkillsDir, func(path string, d fs.DirEntry, err error) e
 ### Error Categories
 
 1. **Invalid Identity Format**
-   - **Trigger**: Identity has < 4 components
-   - **Message**: `"invalid skill identity '%s': need at least host/owner/repo/skill"`
+   - **Trigger**: Identity has < 3 components
+   - **Message**: `"invalid skill identity '%s': need at least host/path/skill (minimum 3 components)"`
    - **Recovery**: User must fix identity in config
 
 2. **No Registry Match**
-   - **Trigger**: No registry matches skill's host/owner
-   - **Message**: `"no registry found for %s/%s"`
+   - **Trigger**: No registry prefix matches the skill identity
+   - **Message**: `"no registry found for skill: %s"`
    - **Recovery**: User must add registry to config
 
 3. **Skill Not Found**
@@ -954,9 +956,10 @@ filepath.WalkDir(config.SkillsDir, func(path string, d fs.DirEntry, err error) e
 ### Unit Tests
 
 **Identity Parsing:**
-- Valid full-path identities
+- Valid full-path identities (3+ components)
 - Nested paths (5+ levels)
-- Invalid formats (< 4 components, empty components)
+- Multi-level groups (GitLab deep paths)
+- Invalid formats (< 3 components, empty components)
 - Edge cases (special characters, very long paths)
 
 **Registry Matching:**
@@ -1008,7 +1011,7 @@ filepath.WalkDir(config.SkillsDir, func(path string, d fs.DirEntry, err error) e
 
 **Note:** There are no existing users, so no migration or backward compatibility is required.
 
-**Design decision:** The system does not support 2-level identities (`repo/skill`). All identities must be full-path format (`host/owner/repo/skill`).
+**Design decision:** The system does not support 2-level identities (`repo/skill`). All identities must be full-path format (`host/repo-path/skill` with minimum 3 components).
 
 **Config version handling:** If a config file has `"version": "1"` or no version field, the system SHALL fail with an error message: `"Config version 1 detected. This version requires config v2. Please run: skillops init"`
 
@@ -1069,13 +1072,16 @@ This design introduces a comprehensive identity system that:
 
 1. **Prevents collisions** through full-path identities
 2. **Supports arbitrary nesting** with any directory structure
-3. **Enables team collaboration** via self-contained config
-4. **Provides traceability** through per-skill metadata
-5. **Handles conflicts gracefully** with interactive resolution
+3. **Supports multi-level groups** (GitLab subgroups of any depth) via registry-based repo boundary detection
+4. **Enables team collaboration** via self-contained config
+5. **Provides traceability** through per-skill metadata
+6. **Handles conflicts gracefully** with interactive resolution
 
 **Key changes:**
-- Identity format: `<host>/<owner>/<repo>/<path-to-skill>`
-- Global store: Organized by host/owner/repo
+- Identity format: `<host>/<repo-path>/<path-to-skill>` (repo boundary determined by registry matching)
+- ParsedIdentity: Simplified to `Full`, `Host`, `Path`, `ShortName` (no Owner/Repo/PathInRepo)
+- Registry URL: Full repo clone URL (not owner-scoped)
+- Global store: Organized by full identity path
 - Config v2: Includes registries and custom symlink names
 - Metadata: Per-skill `.so-skill-meta.json` files
 - Conflict resolution: Interactive TUI for custom naming
