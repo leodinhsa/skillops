@@ -21,7 +21,8 @@ func validateURL(repoURL string) error {
 	hasValidPrefix := strings.HasPrefix(repoURL, "https://") ||
 		strings.HasPrefix(repoURL, "http://") ||
 		strings.HasPrefix(repoURL, "git@") ||
-		strings.HasPrefix(repoURL, "git://")
+		strings.HasPrefix(repoURL, "git://") ||
+		strings.HasPrefix(repoURL, "file://")
 
 	if !hasValidPrefix {
 		return fmt.Errorf("invalid repository URL format: %s", repoURL)
@@ -126,6 +127,17 @@ func NormalizeRepoURL(repoURL string) string {
 
 	// Convert user/repo to SSH format
 	return "git@github.com:" + repoURL + ".git"
+}
+
+// GetLatestCommit returns the HEAD commit hash from a git repository at the given path.
+// Returns an empty string if the commit hash cannot be determined.
+func GetLatestCommit(repoPath string) string {
+	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
 }
 
 // ParseRepoURL extracts host and repoPath from a git repository URL.

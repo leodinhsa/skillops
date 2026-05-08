@@ -102,9 +102,9 @@ This document breaks down the implementation of full-path identity support into 
 - Handle multi-level owners (create nested directories)
 
 **Acceptance:**
-- [ ] Pull creates correct directory structure
-- [ ] Multi-level owners create nested dirs
-- [ ] Existing directories not overwritten
+- [x] Pull creates correct directory structure
+- [x] Multi-level owners create nested dirs
+- [x] Existing directories not overwritten
 
 **Tests:**
 - Pull `github.com/owner/repo` creates correct path
@@ -124,10 +124,10 @@ This document breaks down the implementation of full-path identity support into 
 - Metadata file: `.so-skill-meta.json`
 
 **Acceptance:**
-- [ ] Struct defined with all fields
-- [ ] SaveSkillMetadata writes JSON with formatting
-- [ ] LoadSkillMetadata reads and parses JSON
-- [ ] HasMetadata checks file existence
+- [x] Struct defined with all fields
+- [x] SaveSkillMetadata writes JSON with formatting
+- [x] LoadSkillMetadata reads and parses JSON
+- [x] HasMetadata checks file existence
 
 **Tests:**
 - Save and load metadata
@@ -147,9 +147,9 @@ This document breaks down the implementation of full-path identity support into 
 - Metadata file: `.so-repo-meta.json`
 
 **Acceptance:**
-- [ ] Struct defined with all fields
-- [ ] SaveRepoMetadata writes JSON
-- [ ] LoadRepoMetadata reads JSON
+- [x] Struct defined with all fields
+- [x] SaveRepoMetadata writes JSON
+- [x] LoadRepoMetadata reads JSON
 
 **Tests:**
 - Save and load repo metadata
@@ -170,11 +170,11 @@ This document breaks down the implementation of full-path identity support into 
 - Cleanup temp directories
 
 **Acceptance:**
-- [ ] Clones repository to temp
-- [ ] Extracts skill from pathInRepo
-- [ ] Copies atomically (temp-then-rename)
-- [ ] Saves metadata with commit hash
-- [ ] Cleans up temp on success and error
+- [x] Clones repository to temp
+- [x] Extracts skill from pathInRepo
+- [x] Copies atomically (temp-then-rename)
+- [x] Saves metadata with commit hash
+- [x] Cleans up temp on success and error
 
 **Tests:**
 - Pull skill from valid repo
