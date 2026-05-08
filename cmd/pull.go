@@ -4,17 +4,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
+
 	"skillops/internal/config"
 	"skillops/internal/git"
 	"skillops/internal/skills"
 	"skillops/internal/tui"
-	"skillops/internal/utils"
 
 	"github.com/spf13/cobra"
 )
 
 var (
-	skillName string
+	skillFlag string
 )
 
 var pullCmd = &cobra.Command{
@@ -24,24 +25,26 @@ var pullCmd = &cobra.Command{
 	Args:    cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		url := args[0]
-		url = git.NormalizeRepoURL(url)
-		repoName := git.ExtractRepoName(url)
 
-		if err := utils.ValidateName(repoName); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: invalid repo name from URL: %v\n", err)
+		// Parse the repository URL to extract host and repoPath
+		host, repoPath, err := git.ParseRepoURL(url)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
-		dest := filepath.Join(config.SkillsDir, repoName)
+		// Construct destination: ~/.skillops/skills/<host>/<repoPath>
+		dest := filepath.Join(config.SkillsDir, host, filepath.FromSlash(repoPath))
 
-		if skillName != "" {
-			// Extract specific skill
+		if skillFlag != "" {
+			// Pull specific skill using pathInRepo
 			fmt.Println(tui.TitleStyle.Render(" PULLING SPECIFIC SKILL "))
 			fmt.Printf("Source: %s\n", tui.DimStyle.Render(url))
-			fmt.Printf("Skill:  %s\n", tui.SuccessStyle.Render(skillName))
+			fmt.Printf("Skill:  %s\n", tui.SuccessStyle.Render(skillFlag))
 
-			finalDest := filepath.Join(dest, skillName)
-			if err := skills.PullSkillFromURL(url, skillName, finalDest); err != nil {
+			// destSkillDir = ~/.skillops/skills/<host>/<repoPath>/<pathInRepo>
+			destSkillDir := filepath.Join(dest, filepath.FromSlash(skillFlag))
+			if err := skills.PullSkillFromURL(url, skillFlag, destSkillDir); err != nil {
 				fmt.Fprintf(os.Stderr, "❌ Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -56,9 +59,16 @@ var pullCmd = &cobra.Command{
 				os.Exit(1)
 			}
 
-			// Save metadata
-			meta := skills.RepoMetadata{URL: url}
-			skills.SaveMetadata(dest, meta)
+			// Save repo metadata
+			commitHash := git.GetLatestCommit(dest)
+			meta := skills.NewRepoMetadata{
+				RepoURL:    url,
+				PulledAt:   time.Now(),
+				CommitHash: commitHash,
+			}
+			if err := skills.SaveRepoMeta(dest, meta); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to save repo metadata: %v\n", err)
+			}
 		}
 
 		fmt.Printf("🚀 %s\n", tui.SuccessStyle.Render("Successfully pulled."))
@@ -66,6 +76,6 @@ var pullCmd = &cobra.Command{
 }
 
 func init() {
-	pullCmd.Flags().StringVarP(&skillName, "skill", "s", "", "Pull a specific skill from the repository")
+	pullCmd.Flags().StringVarP(&skillFlag, "skill", "s", "", "Pull a specific skill from the repository (path in repo, e.g. 'skills/logger')")
 	rootCmd.AddCommand(pullCmd)
 }

@@ -1,6 +1,9 @@
 package git
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -306,5 +309,50 @@ func TestParseRepoURL_IdentityPrefix(t *testing.T) {
 				t.Errorf("identity prefix = %q, want %q", prefix, tt.wantPrefix)
 			}
 		})
+	}
+}
+
+func TestGetLatestCommit(t *testing.T) {
+	// Create a temp git repo
+	tmp := t.TempDir()
+
+	cmd := exec.Command("git", "init", tmp)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v\n%s", err, output)
+	}
+
+	// Configure git
+	cmd = exec.Command("git", "-C", tmp, "config", "user.email", "test@test.com")
+	cmd.CombinedOutput()
+	cmd = exec.Command("git", "-C", tmp, "config", "user.name", "Test")
+	cmd.CombinedOutput()
+
+	// Create a file and commit
+	if err := os.WriteFile(filepath.Join(tmp, "test.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("git", "-C", tmp, "add", ".")
+	cmd.CombinedOutput()
+	cmd = exec.Command("git", "-C", tmp, "commit", "-m", "test commit")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v\n%s", err, output)
+	}
+
+	// Get commit hash
+	hash := GetLatestCommit(tmp)
+	if hash == "" {
+		t.Error("GetLatestCommit returned empty string for valid repo")
+	}
+	if len(hash) != 40 {
+		t.Errorf("expected 40-char SHA hash, got %d chars: %q", len(hash), hash)
+	}
+}
+
+func TestGetLatestCommit_InvalidPath(t *testing.T) {
+	// Non-git directory should return empty string
+	tmp := t.TempDir()
+	hash := GetLatestCommit(tmp)
+	if hash != "" {
+		t.Errorf("expected empty string for non-git dir, got %q", hash)
 	}
 }
