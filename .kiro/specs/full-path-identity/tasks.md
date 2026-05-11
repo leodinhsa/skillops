@@ -248,11 +248,11 @@ This document breaks down the implementation of full-path identity support into 
 - Construct global path with full identity
 
 **Acceptance:**
-- [ ] Uses custom name from config.SymlinkNames
-- [ ] Falls back to short name
-- [ ] Returns wasCreated=true only when created
-- [ ] Returns wasCreated=false when already exists
-- [ ] Validates global path exists
+- [x] Uses custom name from config.SymlinkNames
+- [x] Falls back to short name
+- [x] Returns wasCreated=true only when created
+- [x] Returns wasCreated=false when already exists
+- [x] Validates global path exists
 
 **Tests:**
 - Create with default short name
@@ -273,9 +273,9 @@ This document breaks down the implementation of full-path identity support into 
 - Return list of conflicts with identities
 
 **Acceptance:**
-- [ ] Detects conflicts between default short names
-- [ ] Considers existing custom names
-- [ ] Returns all conflicts
+- [x] Detects conflicts between default short names
+- [x] Considers existing custom names
+- [x] Returns all conflicts
 
 **Tests:**
 - No conflicts
@@ -297,11 +297,11 @@ This document breaks down the implementation of full-path identity support into 
 - Return map of identity -> custom name
 
 **Acceptance:**
-- [ ] TUI displays all conflicts
-- [ ] Input fields for each skill
-- [ ] Real-time validation
-- [ ] Navigation between fields
-- [ ] Returns custom names map
+- [x] TUI displays all conflicts
+- [x] Input fields for each skill
+- [x] Real-time validation
+- [x] Navigation between fields
+- [x] Returns custom names map
 
 **Tests:**
 - Manual TUI testing (no unit tests for bubbletea)
@@ -319,10 +319,10 @@ This document breaks down the implementation of full-path identity support into 
 - Suggest manual resolution in config.json
 
 **Acceptance:**
-- [ ] Detects non-TTY (check `os.Stdin.Fd()` and `term.IsTerminal()`)
-- [ ] Fails with clear error message
-- [ ] Lists all conflicts
-- [ ] Suggests manual fix
+- [x] Detects non-TTY (check `os.Stdin.Fd()` and `term.IsTerminal()`)
+- [x] Fails with clear error message
+- [x] Lists all conflicts
+- [x] Suggests manual fix
 
 **Tests:**
 - TTY environment launches TUI
@@ -342,11 +342,11 @@ This document breaks down the implementation of full-path identity support into 
 - Use bubbletea list component for selection
 
 **Acceptance:**
-- [ ] TUI displays all matching skills with full identities
-- [ ] User can navigate with arrow keys
-- [ ] User can select with space/enter
-- [ ] Returns selected skill identity
-- [ ] Handles ESC to cancel
+- [x] TUI displays all matching skills with full identities
+- [x] User can navigate with arrow keys
+- [x] User can select with space/enter
+- [x] Returns selected skill identity
+- [x] Handles ESC to cancel
 
 **Tests:**
 - Manual TUI testing (no unit tests for bubbletea)
@@ -358,351 +358,305 @@ This document breaks down the implementation of full-path identity support into 
 
 ## Phase 5: Command Updates
 
-### Task 5.1: Update sync command
-**File:** `cmd/sync.go`
-**Requirements:** Req 8
-**Design:** Algorithm Specification section 5
-**Description:**
-- Parse full-path identities
-- Use MatchRegistry for missing skills
-- Use custom symlink names from config
-- Track wasCreated for accurate reporting
-- Error (not fallback) when no registry matches
+- [ ] 5.1 Update sync command
+  - **File:** `cmd/sync.go`
+  - **Requirements:** Req 8
+  - **Design:** Algorithm Specification section 5
+  - **Description:**
+    - Parse full-path identities
+    - Use MatchRegistry for missing skills
+    - Use custom symlink names from config
+    - Track wasCreated for accurate reporting
+    - Error (not fallback) when no registry matches
+  - **Acceptance:**
+    - Parses full-path identities
+    - Uses registries for auto-pull
+    - Uses custom symlink names
+    - Reports accurate counts (created, auto-pulled)
+    - Errors when no registry matches
+  - **Tests:**
+    - Sync with existing skills
+    - Sync with missing skills (auto-pull)
+    - Sync with custom symlink names
+    - Sync with no registry match (error)
+    - Idempotent (second run reports 0 created)
 
-**Acceptance:**
-- [ ] Parses full-path identities
-- [ ] Uses registries for auto-pull
-- [ ] Uses custom symlink names
-- [ ] Reports accurate counts (created, auto-pulled)
-- [ ] Errors when no registry matches
+- [ ] 5.2 Update add command
+  - **File:** `cmd/add.go`, `internal/tui/add.go`
+  - **Requirements:** Req 11
+  - **Description:**
+    - Display full identities in TUI
+    - Detect conflicts before confirmation
+    - Launch conflict resolution TUI
+    - Auto-populate registries from metadata
+    - Save custom symlink names to config
+  - **Acceptance:**
+    - TUI shows full identities
+    - Detects conflicts
+    - Launches conflict TUI when needed
+    - Reads metadata to get registry URL
+    - Adds registry to config if not exists
+    - Saves custom names to config.SymlinkNames
+  - **Tests:**
+    - Add skill without conflict
+    - Add skills with conflict (TUI launched)
+    - Registry auto-populated
+    - Custom names saved
 
-**Tests:**
-- Sync with existing skills
-- Sync with missing skills (auto-pull)
-- Sync with custom symlink names
-- Sync with no registry match (error)
-- Idempotent (second run reports 0 created)
+- [ ] 5.3 Update remove command
+  - **File:** `cmd/remove.go`, `internal/tui/remove.go`
+  - **Requirements:** Req 9
+  - **Dependencies:** Task 4.5 (Remove Disambiguation TUI)
+  - **Description:**
+    - Support symlink name or full identity
+    - Launch disambiguation TUI for multi-match (uses Task 4.5)
+    - Remove from config.Tools and config.SymlinkNames
+  - **Acceptance:**
+    - Accepts symlink name
+    - Accepts full identity
+    - Disambiguates multi-match with TUI
+    - Removes from both Tools and SymlinkNames
+  - **Tests:**
+    - Remove by symlink name (unique)
+    - Remove by full identity
+    - Remove by symlink name (multi-match, TUI)
+    - Custom name removed from config
 
----
+- [ ] 5.4 Update status command
+  - **File:** `cmd/status.go`
+  - **Requirements:** Req 10
+  - **Description:**
+    - Display symlink name and full identity
+    - Check symlink using symlink name from config
+    - Show registry source
+    - Group by tool
+  - **Acceptance:**
+    - Shows symlink name
+    - Shows full identity
+    - Shows linked/not-linked status
+    - Groups by tool
+  - **Tests:**
+    - Status with default names
+    - Status with custom names
+    - Status shows correct link status
 
-### Task 5.2: Update add command
-**File:** `cmd/add.go`, `internal/tui/add.go`
-**Requirements:** Req 11
-**Description:**
-- Display full identities in TUI
-- Detect conflicts before confirmation
-- Launch conflict resolution TUI
-- Auto-populate registries from metadata
-- Save custom symlink names to config
+- [ ] 5.5 Update pull command
+  - **File:** `cmd/pull.go`
+  - **Requirements:** Req 13
+  - **Description:**
+    - Use ParseRepoURL for host/owner/repo
+    - Create nested directory structure
+    - For `--skill` flag, use PullSkillFromURL
+    - For full pull, save RepoMetadata
+  - **Acceptance:**
+    - Creates correct directory structure
+    - --skill uses PullSkillFromURL
+    - Full pull saves RepoMetadata
+    - Multi-level groups supported
+  - **Tests:**
+    - Pull full repo
+    - Pull specific skill
+    - Pull with multi-level group
+    - Pull creates correct paths
 
-**Acceptance:**
-- [ ] TUI shows full identities
-- [ ] Detects conflicts
-- [ ] Launches conflict TUI when needed
-- [ ] Reads metadata to get registry URL
-- [ ] Adds registry to config if not exists
-- [ ] Saves custom names to config.SymlinkNames
+- [ ] 5.6 Update update command
+  - **File:** `cmd/update.go`
+  - **Requirements:** Req 14
+  - **Design:** Algorithm Specification section 6
+  - **Description:**
+    - Read skill metadata
+    - Clone from metadata.RepoURL
+    - Extract from metadata.PathInRepo
+    - Update metadata after pull
+  - **Acceptance:**
+    - Reads metadata
+    - Clones from correct URL
+    - Extracts from correct path
+    - Updates metadata timestamps
+    - Errors when metadata missing
+  - **Tests:**
+    - Update skill with metadata
+    - Update skill without metadata (error)
+    - Metadata updated after pull
 
-**Tests:**
-- Add skill without conflict
-- Add skills with conflict (TUI launched)
-- Registry auto-populated
-- Custom names saved
+- [ ] 5.7 Implement Config V1 Detection
+  - **File:** `internal/config/localconfig.go`
+  - **Requirements:** Design - Migration and Compatibility section
+  - **Dependencies:** Task 1.3 (LocalConfig V2)
+  - **Description:**
+    - Detect config with `"version": "1"` or missing version field
+    - Fail with clear error message
+    - Suggest running `skillops init` to migrate
+  - **Acceptance:**
+    - Detects version "1" in config
+    - Detects missing version field
+    - Returns error with migration instructions
+    - Error message includes: "Config version 1 detected. This version requires config v2. Please run: skillops init"
+  - **Tests:**
+    - Read config with version "1" (error)
+    - Read config with no version field (error)
+    - Read config with version "2" (success)
+    - Error message contains migration instructions
 
----
-
-### Task 5.3: Update remove command
-**File:** `cmd/remove.go`, `internal/tui/remove.go`
-**Requirements:** Req 9
-**Dependencies:** Task 4.5 (Remove Disambiguation TUI)
-**Description:**
-- Support symlink name or full identity
-- Launch disambiguation TUI for multi-match (uses Task 4.5)
-- Remove from config.Tools and config.SymlinkNames
-
-**Acceptance:**
-- [ ] Accepts symlink name
-- [ ] Accepts full identity
-- [ ] Disambiguates multi-match with TUI
-- [ ] Removes from both Tools and SymlinkNames
-
-**Tests:**
-- Remove by symlink name (unique)
-- Remove by full identity
-- Remove by symlink name (multi-match, TUI)
-- Custom name removed from config
-
----
-
-### Task 5.4: Update status command
-**File:** `cmd/status.go`
-**Requirements:** Req 10
-**Description:**
-- Display symlink name and full identity
-- Check symlink using symlink name from config
-- Show registry source
-- Group by tool
-
-**Acceptance:**
-- [ ] Shows symlink name
-- [ ] Shows full identity
-- [ ] Shows linked/not-linked status
-- [ ] Groups by tool
-
-**Tests:**
-- Status with default names
-- Status with custom names
-- Status shows correct link status
-
----
-
-### Task 5.5: Update pull command
-**File:** `cmd/pull.go`
-**Requirements:** Req 13
-**Description:**
-- Use ParseRepoURL for host/owner/repo
-- Create nested directory structure
-- For `--skill` flag, use PullSkillFromURL
-- For full pull, save RepoMetadata
-
-**Acceptance:**
-- [ ] Creates correct directory structure
-- [ ] --skill uses PullSkillFromURL
-- [ ] Full pull saves RepoMetadata
-- [ ] Multi-level groups supported
-
-**Tests:**
-- Pull full repo
-- Pull specific skill
-- Pull with multi-level group
-- Pull creates correct paths
-
----
-
-### Task 5.6: Update update command
-**File:** `cmd/update.go`
-**Requirements:** Req 14
-**Design:** Algorithm Specification section 6
-**Description:**
-- Read skill metadata
-- Clone from metadata.RepoURL
-- Extract from metadata.PathInRepo
-- Update metadata after pull
-
-**Acceptance:**
-- [ ] Reads metadata
-- [ ] Clones from correct URL
-- [ ] Extracts from correct path
-- [ ] Updates metadata timestamps
-- [ ] Errors when metadata missing
-
-**Tests:**
-- Update skill with metadata
-- Update skill without metadata (error)
-- Metadata updated after pull
-
----
-
-### Task 5.7: Implement Config V1 Detection
-**File:** `internal/config/localconfig.go`
-**Requirements:** Design - Migration and Compatibility section
-**Dependencies:** Task 1.3 (LocalConfig V2)
-**Description:**
-- Detect config with `"version": "1"` or missing version field
-- Fail with clear error message
-- Suggest running `skillops init` to migrate
-
-**Acceptance:**
-- [ ] Detects version "1" in config
-- [ ] Detects missing version field
-- [ ] Returns error with migration instructions
-- [ ] Error message includes: "Config version 1 detected. This version requires config v2. Please run: skillops init"
-
-**Tests:**
-- Read config with version "1" (error)
-- Read config with no version field (error)
-- Read config with version "2" (success)
-- Error message contains migration instructions
-
----
-
-### Task 5.8: Auto-populate Registries in Add Command
-**File:** `cmd/add.go`, `internal/config/localconfig.go`
-**Requirements:** Req 11 AC 7, Req 3 AC 2
-**Dependencies:** Task 2.2 (SkillMetadata), Task 3.1 (Registry struct)
-**Description:**
-- When adding skills, read `.so-skill-meta.json` from each skill
-- Extract `repo_url` from metadata
-- Parse URL to get host/owner (use `git.ParseRepoURL`)
-- Check if registry already exists in config
-- If not exists, add new registry with auto-generated name and priority
-- Deduplicate registries (same URL)
-
-**Acceptance:**
-- [ ] Reads metadata from added skills
-- [ ] Extracts repo_url
-- [ ] Parses URL to get host/owner
-- [ ] Checks for existing registry
-- [ ] Adds new registry if not exists
-- [ ] Generates registry name (e.g., "GitHub - anthropics")
-- [ ] Assigns priority (max existing priority + 1)
-- [ ] Deduplicates by URL
-
-**Tests:**
-- Add skill with new registry (registry added)
-- Add skill with existing registry (no duplicate)
-- Add multiple skills from same repo (one registry)
-- Add skills from different repos (multiple registries)
-- Registry name generation
-- Priority assignment
+- [ ] 5.8 Auto-populate Registries in Add Command
+  - **File:** `cmd/add.go`, `internal/config/localconfig.go`
+  - **Requirements:** Req 11 AC 7, Req 3 AC 2
+  - **Dependencies:** Task 2.2 (SkillMetadata), Task 3.1 (Registry struct)
+  - **Description:**
+    - When adding skills, read `.so-skill-meta.json` from each skill
+    - Extract `repo_url` from metadata
+    - Parse URL to get host/owner (use `git.ParseRepoURL`)
+    - Check if registry already exists in config
+    - If not exists, add new registry with auto-generated name and priority
+    - Deduplicate registries (same URL)
+  - **Acceptance:**
+    - Reads metadata from added skills
+    - Extracts repo_url
+    - Parses URL to get host/owner
+    - Checks for existing registry
+    - Adds new registry if not exists
+    - Generates registry name (e.g., "GitHub - anthropics")
+    - Assigns priority (max existing priority + 1)
+    - Deduplicates by URL
+  - **Tests:**
+    - Add skill with new registry (registry added)
+    - Add skill with existing registry (no duplicate)
+    - Add multiple skills from same repo (one registry)
+    - Add skills from different repos (multiple registries)
+    - Registry name generation
+    - Priority assignment
 
 ---
 
 ## Phase 6: Discovery
 
-### Task 6.1: Update discovery logic
-**File:** `internal/skills/skills.go`
-**Requirements:** Req 12
-**Description:**
-- Walk global store recursively
-- Skip hidden directories (starting with ".")
-- Construct full-path identities from filesystem
-- Extract host/owner/repo from path
-
-**Acceptance:**
-- [ ] Walks global store
-- [ ] Skips hidden directories
-- [ ] Constructs correct identities
-- [ ] Handles multi-level owners
-
-**Tests:**
-- Discover skills in flat structure
-- Discover skills in nested structure
-- Skip .git directories
-- Skip .so-* files
-- Multi-level owner paths
+- [ ] 6.1 Update discovery logic
+  - **File:** `internal/skills/skills.go`
+  - **Requirements:** Req 12
+  - **Description:**
+    - Walk global store recursively
+    - Skip hidden directories (starting with ".")
+    - Construct full-path identities from filesystem
+    - Extract host/owner/repo from path
+  - **Acceptance:**
+    - Walks global store
+    - Skips hidden directories
+    - Constructs correct identities
+    - Handles multi-level owners
+  - **Tests:**
+    - Discover skills in flat structure
+    - Discover skills in nested structure
+    - Skip .git directories
+    - Skip .so-* files
+    - Multi-level owner paths
 
 ---
 
 ## Phase 7: Validation & Error Handling
 
-### Task 7.1: Implement path validation
-**File:** `internal/utils/utils.go`
-**Requirements:** Req 15
-**Description:**
-- Validate skill identities (min 4 components)
-- Validate no path traversal
-- Validate components not empty
-- Clear error messages
+- [ ] 7.1 Implement path validation
+  - **File:** `internal/utils/utils.go`
+  - **Requirements:** Req 15
+  - **Description:**
+    - Validate skill identities (min 4 components)
+    - Validate no path traversal
+    - Validate components not empty
+    - Clear error messages
+  - **Acceptance:**
+    - Validates component count
+    - Validates all components
+    - Returns descriptive errors
+  - **Tests:**
+    - Valid identity passes
+    - < 4 components fails
+    - Empty component fails
+    - ".." component fails
+    - "." component fails
 
-**Acceptance:**
-- [ ] Validates component count
-- [ ] Validates all components
-- [ ] Returns descriptive errors
+- [ ] 7.2 Add error messages
+  - **Files:** All command files
+  - **Requirements:** All requirements (error handling)
+  - **Description:**
+    - Add clear error messages with full identity
+    - Suggest recovery actions
+    - Handle non-TTY environments
+  - **Acceptance:**
+    - Errors include full identity
+    - Errors suggest actions
+    - Non-TTY errors are clear
 
-**Tests:**
-- Valid identity passes
-- < 4 components fails
-- Empty component fails
-- ".." component fails
-- "." component fails
+- [ ] 7.3 Standardize Non-TTY Error Messages
+  - **Files:** `cmd/add.go`, `cmd/remove.go`, `internal/tui/add.go`, `internal/tui/remove.go`
+  - **Requirements:** Req 7 AC 3
+  - **Dependencies:** Task 4.4 (Non-TTY conflict detection)
+  - **Description:**
+    - Create standard error message format for non-TTY conflicts
+    - Include all conflicting identities
+    - Provide clear manual resolution steps
+    - Show example config.json snippet
+  - **Acceptance:**
+    - Error message format is consistent across commands
+    - Lists all conflicting skills with full identities
+    - Provides step-by-step resolution instructions
+    - Shows example of adding to `symlink_names` in config.json
+    - Error is actionable (user knows exactly what to do)
+  - **Example error format:**
+    ```
+    Error: Symlink conflicts detected (non-interactive mode)
 
----
+    The following skills have conflicting symlink names:
 
-### Task 7.2: Add error messages
-**Files:** All command files
-**Requirements:** All requirements (error handling)
-**Description:**
-- Add clear error messages with full identity
-- Suggest recovery actions
-- Handle non-TTY environments
+    Symlink name: logger
+      - github.com/company-a/utils/tools/logger
+      - github.com/company-b/helpers/services/logger
 
-**Acceptance:**
-- [ ] Errors include full identity
-- [ ] Errors suggest actions
-- [ ] Non-TTY errors are clear
+    To resolve, add custom symlink names to .skillops/config.json:
 
----
+    {
+      "symlink_names": {
+        "github.com/company-a/utils/tools/logger": "logger-utils",
+        "github.com/company-b/helpers/services/logger": "logger-services"
+      }
+    }
 
-### Task 7.3: Standardize Non-TTY Error Messages
-**Files:** `cmd/add.go`, `cmd/remove.go`, `internal/tui/add.go`, `internal/tui/remove.go`
-**Requirements:** Req 7 AC 3
-**Dependencies:** Task 4.4 (Non-TTY conflict detection)
-**Description:**
-- Create standard error message format for non-TTY conflicts
-- Include all conflicting identities
-- Provide clear manual resolution steps
-- Show example config.json snippet
-
-**Acceptance:**
-- [ ] Error message format is consistent across commands
-- [ ] Lists all conflicting skills with full identities
-- [ ] Provides step-by-step resolution instructions
-- [ ] Shows example of adding to `symlink_names` in config.json
-- [ ] Error is actionable (user knows exactly what to do)
-
-**Example error format:**
-```
-Error: Symlink conflicts detected (non-interactive mode)
-
-The following skills have conflicting symlink names:
-
-Symlink name: logger
-  - github.com/company-a/utils/tools/logger
-  - github.com/company-b/helpers/services/logger
-
-To resolve, add custom symlink names to .skillops/config.json:
-
-{
-  "symlink_names": {
-    "github.com/company-a/utils/tools/logger": "logger-utils",
-    "github.com/company-b/helpers/services/logger": "logger-services"
-  }
-}
-
-Then run: skillops sync
-```
-
-**Tests:**
-- Add command in non-TTY with conflicts
-- Remove command in non-TTY with multi-match
-- Error message contains all required elements
-- Error message is parseable by CI tools
+    Then run: skillops sync
+    ```
+  - **Tests:**
+    - Add command in non-TTY with conflicts
+    - Remove command in non-TTY with multi-match
+    - Error message contains all required elements
+    - Error message is parseable by CI tools
 
 ---
 
 ## Phase 8: Testing & Documentation
 
-### Task 8.1: Integration tests
-**File:** `cmd/*_test.go`
-**Description:**
-- End-to-end workflow tests
-- Pull → Add → Sync
-- Conflict resolution
-- Multi-registry
-- Update with metadata
+- [ ] 8.1 Integration tests
+  - **File:** `cmd/*_test.go`
+  - **Description:**
+    - End-to-end workflow tests
+    - Pull → Add → Sync
+    - Conflict resolution
+    - Multi-registry
+    - Update with metadata
+  - **Tests:**
+    - Full workflow on new machine
+    - Conflict resolution flow
+    - Multi-registry priority
+    - Update flow
 
-**Tests:**
-- Full workflow on new machine
-- Conflict resolution flow
-- Multi-registry priority
-- Update flow
-
----
-
-### Task 8.2: Update documentation
-**Files:** `README.md`, `DOC_GUIDE.md`
-**Description:**
-- Update examples to use full-path identities
-- Document registry configuration
-- Document conflict resolution
-- Update command help text
-
-**Acceptance:**
-- [ ] All examples use full-path format
-- [ ] Registry docs added
-- [ ] Conflict resolution docs added
-- [ ] Help text updated
+- [ ] 8.2 Update documentation
+  - **Files:** `README.md`, `DOC_GUIDE.md`
+  - **Description:**
+    - Update examples to use full-path identities
+    - Document registry configuration
+    - Document conflict resolution
+    - Update command help text
+  - **Acceptance:**
+    - All examples use full-path format
+    - Registry docs added
+    - Conflict resolution docs added
+    - Help text updated
 
 ---
 
