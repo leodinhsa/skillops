@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -44,6 +45,18 @@ func TestValidateRegistryURL(t *testing.T) {
 			wantErr: true,
 			errMsg:  "HTTPS or SSH",
 		},
+		{
+			name:    "invalid: plain HTTP not allowed",
+			url:     "http://github.com/anthropics/skills",
+			wantErr: true,
+			errMsg:  "HTTPS or SSH",
+		},
+		{
+			name:    "invalid: host-only URL (no path)",
+			url:     "https://github.com",
+			wantErr: true,
+			errMsg:  "must contain a path after host",
+		},
 	}
 
 	for _, tt := range tests {
@@ -52,7 +65,7 @@ func TestValidateRegistryURL(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("expected error, got nil")
-				} else if tt.errMsg != "" && !contains(err.Error(), tt.errMsg) {
+				} else if tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
 					t.Errorf("error %q should contain %q", err.Error(), tt.errMsg)
 				}
 			} else {
@@ -91,7 +104,7 @@ func TestNormalizeRegistryURL(t *testing.T) {
 			expected: "github.com/company/utils",
 		},
 		{
-			name:     "HTTP URL",
+			name:     "HTTP URL (normalize still works even though validate rejects)",
 			input:    "http://gitlab.internal/team/repo",
 			expected: "gitlab.internal/team/repo",
 		},
@@ -175,6 +188,46 @@ func TestMatchRegistry_MultipleRegistries_Priority(t *testing.T) {
 	}
 }
 
+func TestMatchRegistry_OverlappingPrefixes_PriorityWins(t *testing.T) {
+	// Two registries with overlapping prefixes: the parent repo and a nested sub-path.
+	// Both can match the same identity. Priority determines which wins.
+	registries := []Registry{
+		{URL: "https://github.com/org/repo", Name: "Parent Repo", Priority: 1},
+		{URL: "https://github.com/org/repo/subdir", Name: "Nested Repo", Priority: 2},
+	}
+
+	// Identity: github.com/org/repo/subdir/skill
+	// Both registries match:
+	//   - "github.com/org/repo" + "/" → prefix matches, pathInRepo = "subdir/skill"
+	//   - "github.com/org/repo/subdir" + "/" → prefix matches, pathInRepo = "skill"
+	// Priority 1 (Parent Repo) wins.
+	cloneURL, pathInRepo, err := MatchRegistry("github.com/org/repo/subdir/skill", registries)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cloneURL != "https://github.com/org/repo" {
+		t.Errorf("cloneURL = %q, want parent repo (higher priority)", cloneURL)
+	}
+	if pathInRepo != "subdir/skill" {
+		t.Errorf("pathInRepo = %q, want %q", pathInRepo, "subdir/skill")
+	}
+
+	// Now reverse priorities: nested repo has higher priority
+	registries[0].Priority = 2
+	registries[1].Priority = 1
+
+	cloneURL, pathInRepo, err = MatchRegistry("github.com/org/repo/subdir/skill", registries)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cloneURL != "https://github.com/org/repo/subdir" {
+		t.Errorf("cloneURL = %q, want nested repo (now higher priority)", cloneURL)
+	}
+	if pathInRepo != "skill" {
+		t.Errorf("pathInRepo = %q, want %q", pathInRepo, "skill")
+	}
+}
+
 func TestMatchRegistry_NoMatch(t *testing.T) {
 	registries := []Registry{
 		{URL: "https://github.com/anthropics/skills", Name: "Anthropic Skills", Priority: 1},
@@ -184,7 +237,7 @@ func TestMatchRegistry_NoMatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for no match, got nil")
 	}
-	if !contains(err.Error(), "no registry found") {
+	if !strings.Contains(err.Error(), "no registry found") {
 		t.Errorf("error should contain 'no registry found', got: %v", err)
 	}
 }
@@ -194,7 +247,7 @@ func TestMatchRegistry_EmptyRegistries(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty registries, got nil")
 	}
-	if !contains(err.Error(), "no registries configured") {
+	if !strings.Contains(err.Error(), "no registries configured") {
 		t.Errorf("error should contain 'no registries configured', got: %v", err)
 	}
 }
@@ -253,27 +306,6 @@ func TestMatchRegistry_PathInRepoCorrectlyExtracted(t *testing.T) {
 	}
 }
 
-func TestMatchRegistry_PriorityOrder(t *testing.T) {
-	// Both registries could match if we had overlapping prefixes,
-	// but here we test that priority ordering is respected
-	registries := []Registry{
-		{URL: "https://github.com/org/repo-specific", Name: "Specific", Priority: 1},
-		{URL: "https://github.com/org/repo-general", Name: "General", Priority: 2},
-	}
-
-	// Only matches repo-specific
-	cloneURL, pathInRepo, err := MatchRegistry("github.com/org/repo-specific/skills/auth", registries)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cloneURL != "https://github.com/org/repo-specific" {
-		t.Errorf("cloneURL = %q, want specific repo", cloneURL)
-	}
-	if pathInRepo != "skills/auth" {
-		t.Errorf("pathInRepo = %q, want %q", pathInRepo, "skills/auth")
-	}
-}
-
 func TestMatchRegistry_SSHWithGitSuffix(t *testing.T) {
 	registries := []Registry{
 		{URL: "git@github.com:company/private-skills.git", Name: "Private", Priority: 1},
@@ -329,18 +361,4 @@ func TestMatchesRegistry(t *testing.T) {
 			}
 		})
 	}
-}
-
-// contains is a helper for checking substring presence in error messages.
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
-}
-
-func containsSubstr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

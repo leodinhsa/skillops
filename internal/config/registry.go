@@ -7,8 +7,12 @@ import (
 )
 
 // ValidateRegistryURL checks that a registry URL is valid.
-// It must not have a trailing slash, must be a valid git URL format,
+// It must not have a trailing slash, must be HTTPS or SSH format,
 // and must contain at least a path after the host (e.g., owner/repo).
+//
+// Note: This function is intended to be called when adding/modifying registries
+// (e.g., in the add command or config commands), not during config load.
+// This avoids rejecting existing configs if validation rules evolve.
 func ValidateRegistryURL(url string) error {
 	if url == "" {
 		return fmt.Errorf("registry URL cannot be empty")
@@ -16,8 +20,8 @@ func ValidateRegistryURL(url string) error {
 	if strings.HasSuffix(url, "/") {
 		return fmt.Errorf("registry URL must not have a trailing slash: %s", url)
 	}
-	// Must be HTTPS or SSH format
-	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "git@") {
+	// Only HTTPS and SSH are supported (no plain HTTP)
+	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "git@") {
 		return fmt.Errorf("registry URL must be HTTPS or SSH format: %s", url)
 	}
 
