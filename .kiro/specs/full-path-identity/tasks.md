@@ -195,8 +195,8 @@ This document breaks down the implementation of full-path identity support into 
 - Add validation for Registry.URL (no trailing slash)
 
 **Acceptance:**
-- [ ] Struct defined with all fields
-- [ ] URL validation implemented
+- [x] Struct defined with all fields
+- [x] URL validation implemented
 
 **Tests:**
 - Valid registry URL
@@ -217,12 +217,12 @@ This document breaks down the implementation of full-path identity support into 
 - Sort registries by priority
 
 **Acceptance:**
-- [ ] MatchRegistry finds correct registry by prefix matching
-- [ ] NormalizeRegistryURL handles HTTPS and SSH formats
-- [ ] Respects priority order
-- [ ] Returns error when no match
-- [ ] Correctly extracts pathInRepo as remainder after prefix
-- [ ] Handles multi-level group URLs correctly
+- [x] MatchRegistry finds correct registry by prefix matching
+- [x] NormalizeRegistryURL handles HTTPS and SSH formats
+- [x] Respects priority order
+- [x] Returns error when no match
+- [x] Correctly extracts pathInRepo as remainder after prefix
+- [x] Handles multi-level group URLs correctly
 
 **Tests:**
 - Match with single registry (HTTPS)
