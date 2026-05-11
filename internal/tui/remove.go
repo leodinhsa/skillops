@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"skillops/internal/config"
+	"skillops/internal/skills"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -418,4 +419,134 @@ func UnlinkSkillFromTool(cwd, identity, shortName, tool string) (string, error) 
 	}
 
 	return fmt.Sprintf("- %s from %s", shortName, tool), nil
+}
+
+// disambiguateModel is a bubbletea model for selecting one skill from multiple
+// that share the same symlink name. Used when a user provides a symlink name
+// that matches multiple skills in the config.
+type disambiguateModel struct {
+	symlinkName string   // the ambiguous symlink name
+	identities  []string // full identities that match
+	cursor      int      // current cursor position
+	selected    string   // the selected identity (set on confirm)
+	quitting    bool
+	cancelled   bool
+}
+
+// NewDisambiguateModel creates a new disambiguation TUI model.
+func NewDisambiguateModel(symlinkName string, identities []string) disambiguateModel {
+	return disambiguateModel{
+		symlinkName: symlinkName,
+		identities:  identities,
+	}
+}
+
+func (m disambiguateModel) Init() tea.Cmd { return nil }
+
+func (m disambiguateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "esc":
+			m.cancelled = true
+			m.quitting = true
+			return m, tea.Quit
+		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case "down", "j":
+			if m.cursor < len(m.identities)-1 {
+				m.cursor++
+			}
+		case "enter", " ":
+			if len(m.identities) > 0 {
+				m.selected = m.identities[m.cursor]
+				m.quitting = true
+				return m, tea.Quit
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m disambiguateModel) View() string {
+	if m.quitting {
+		return ""
+	}
+
+	content := TitleStyle.Render(" MULTIPLE SKILLS MATCH: "+m.symlinkName+" ") + "\n\n"
+	content += InfoStyle.Render("Select which skill to remove:") + "\n\n"
+
+	for i, identity := range m.identities {
+		cursor := "  "
+		style := NormalStyle
+		if i == m.cursor {
+			cursor = "> "
+			style = SelectedStyle
+		}
+		content += fmt.Sprintf("%s%s\n", cursor, style.Render(identity))
+	}
+
+	content += HelpStyle.Render("\n [↑↓] Navigate  [Space/Enter] Select  [Esc] Cancel")
+	return BorderStyle.Render(content) + "\n"
+}
+
+// Selected returns the selected identity.
+func (m disambiguateModel) Selected() string {
+	return m.selected
+}
+
+// Cancelled returns true if the user cancelled the selection.
+func (m disambiguateModel) Cancelled() bool {
+	return m.cancelled
+}
+
+// RunDisambiguate launches the disambiguation TUI and returns the selected identity.
+// Returns an error if the user cancels.
+func RunDisambiguate(symlinkName string, identities []string) (string, error) {
+	model := NewDisambiguateModel(symlinkName, identities)
+	p := tea.NewProgram(model)
+	finalModel, err := p.Run()
+	if err != nil {
+		return "", fmt.Errorf("disambiguation TUI error: %w", err)
+	}
+	result := finalModel.(disambiguateModel)
+	if result.Cancelled() {
+		return "", fmt.Errorf("selection cancelled by user")
+	}
+	return result.Selected(), nil
+}
+
+// FindMatchingIdentities finds all skill identities in the local config that
+// would use the given symlink name (either as their short name or custom name).
+func FindMatchingIdentities(symlinkName string, localConfig config.LocalConfig) []string {
+	var matches []string
+
+	seen := map[string]bool{}
+	for _, skillList := range localConfig.Tools {
+		for _, identity := range skillList {
+			if seen[identity] {
+				continue
+			}
+			seen[identity] = true
+
+			// Check if this identity's effective symlink name matches
+			effectiveName := localConfig.SymlinkNames[identity]
+			if effectiveName == "" {
+				// Use short name (final path component)
+				parsed, err := skills.ParseIdentity(identity)
+				if err != nil {
+					continue
+				}
+				effectiveName = parsed.ShortName
+			}
+
+			if effectiveName == symlinkName {
+				matches = append(matches, identity)
+			}
+		}
+	}
+
+	return matches
 }
