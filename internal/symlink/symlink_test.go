@@ -280,3 +280,299 @@ func TestFindSkillPath_ByFullIdentity(t *testing.T) {
 		t.Errorf("got %q, want %q", got, skillPath)
 	}
 }
+
+// setupGlobalConfig sets up a temporary agentics.yaml with the given tool mapping.
+// It overrides config.ConfigPath and config.ConfigDir for test isolation.
+func setupGlobalConfig(t *testing.T, agentics map[string]string) {
+	t.Helper()
+	tmp := t.TempDir()
+	configDir := filepath.Join(tmp, "config")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	origConfigDir := config.ConfigDir
+	origConfigPath := config.ConfigPath
+	config.ConfigDir = configDir
+	config.ConfigPath = filepath.Join(configDir, "agentics.yaml")
+	t.Cleanup(func() {
+		config.ConfigDir = origConfigDir
+		config.ConfigPath = origConfigPath
+	})
+
+	// Write agentics.yaml
+	content := "config_version: 2\nagentics:\n"
+	for name, path := range agentics {
+		content += "  " + name + ": " + path + "\n"
+	}
+	if err := os.WriteFile(config.ConfigPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// setupGlobalSkill creates a fake skill in the global store with a SKILL.md file.
+// Returns the global skill path.
+func setupGlobalSkill(t *testing.T, globalStoreDir, identity string) string {
+	t.Helper()
+	skillPath := filepath.Join(globalStoreDir, filepath.FromSlash(identity))
+	if err := os.MkdirAll(skillPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillPath, "SKILL.md"), []byte("# skill"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return skillPath
+}
+
+func TestCreateSkillSymlink_DefaultShortName(t *testing.T) {
+	// Set up global store
+	globalStore := t.TempDir()
+	overrideSkillsDir(t, globalStore)
+
+	// Set up project directory as cwd
+	projectDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	// Set up global config with tool path
+	setupGlobalConfig(t, map[string]string{"kiro": ".kiro/skills"})
+
+	// Create a skill in the global store
+	identity := "github.com/anthropics/skills/skills/logger"
+	setupGlobalSkill(t, globalStore, identity)
+
+	// Create symlink with default short name
+	localCfg := config.LocalConfig{
+		Version: "2",
+		Tools:   map[string][]string{"kiro": {identity}},
+	}
+
+	wasCreated, err := CreateSkillSymlink(identity, "kiro", localCfg)
+	if err != nil {
+		t.Fatalf("CreateSkillSymlink error: %v", err)
+	}
+	if !wasCreated {
+		t.Error("expected wasCreated=true")
+	}
+
+	// Verify symlink exists with short name "logger"
+	symlinkPath := filepath.Join(projectDir, ".kiro", "skills", "logger")
+	info, err := os.Lstat(symlinkPath)
+	if err != nil {
+		t.Fatalf("symlink not created: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Error("expected symlink, got regular file/dir")
+	}
+
+	// Verify symlink target
+	target, err := os.Readlink(symlinkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedTarget := filepath.Join(globalStore, "github.com", "anthropics", "skills", "skills", "logger")
+	if target != expectedTarget {
+		t.Errorf("symlink target = %q, want %q", target, expectedTarget)
+	}
+}
+
+func TestCreateSkillSymlink_CustomName(t *testing.T) {
+	// Set up global store
+	globalStore := t.TempDir()
+	overrideSkillsDir(t, globalStore)
+
+	// Set up project directory as cwd
+	projectDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	// Set up global config
+	setupGlobalConfig(t, map[string]string{"kiro": ".kiro/skills"})
+
+	// Create a skill in the global store
+	identity := "github.com/company-a/utils/tools/logger"
+	setupGlobalSkill(t, globalStore, identity)
+
+	// Create symlink with custom name from SymlinkNames
+	localCfg := config.LocalConfig{
+		Version:      "2",
+		Tools:        map[string][]string{"kiro": {identity}},
+		SymlinkNames: map[string]string{identity: "logger-utils"},
+	}
+
+	wasCreated, err := CreateSkillSymlink(identity, "kiro", localCfg)
+	if err != nil {
+		t.Fatalf("CreateSkillSymlink error: %v", err)
+	}
+	if !wasCreated {
+		t.Error("expected wasCreated=true")
+	}
+
+	// Verify symlink exists with custom name "logger-utils"
+	symlinkPath := filepath.Join(projectDir, ".kiro", "skills", "logger-utils")
+	info, err := os.Lstat(symlinkPath)
+	if err != nil {
+		t.Fatalf("symlink not created at custom name path: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Error("expected symlink, got regular file/dir")
+	}
+
+	// Verify the default name was NOT used
+	defaultPath := filepath.Join(projectDir, ".kiro", "skills", "logger")
+	if _, err := os.Lstat(defaultPath); !os.IsNotExist(err) {
+		t.Error("symlink should NOT exist at default short name path")
+	}
+}
+
+func TestCreateSkillSymlink_Idempotent(t *testing.T) {
+	// Set up global store
+	globalStore := t.TempDir()
+	overrideSkillsDir(t, globalStore)
+
+	// Set up project directory as cwd
+	projectDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	// Set up global config
+	setupGlobalConfig(t, map[string]string{"kiro": ".kiro/skills"})
+
+	// Create a skill in the global store
+	identity := "github.com/anthropics/skills/skills/logger"
+	setupGlobalSkill(t, globalStore, identity)
+
+	localCfg := config.LocalConfig{
+		Version: "2",
+		Tools:   map[string][]string{"kiro": {identity}},
+	}
+
+	// First call: should create
+	wasCreated, err := CreateSkillSymlink(identity, "kiro", localCfg)
+	if err != nil {
+		t.Fatalf("first CreateSkillSymlink error: %v", err)
+	}
+	if !wasCreated {
+		t.Error("first call: expected wasCreated=true")
+	}
+
+	// Second call: should be idempotent (already linked correctly)
+	wasCreated, err = CreateSkillSymlink(identity, "kiro", localCfg)
+	if err != nil {
+		t.Fatalf("second CreateSkillSymlink error: %v", err)
+	}
+	if wasCreated {
+		t.Error("second call: expected wasCreated=false (idempotent)")
+	}
+}
+
+func TestCreateSkillSymlink_Conflict(t *testing.T) {
+	// Set up global store
+	globalStore := t.TempDir()
+	overrideSkillsDir(t, globalStore)
+
+	// Set up project directory as cwd
+	projectDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	// Set up global config
+	setupGlobalConfig(t, map[string]string{"kiro": ".kiro/skills"})
+
+	// Create two skills with the same short name in the global store
+	identity1 := "github.com/company-a/utils/tools/logger"
+	identity2 := "github.com/company-b/helpers/services/logger"
+	setupGlobalSkill(t, globalStore, identity1)
+	setupGlobalSkill(t, globalStore, identity2)
+
+	localCfg := config.LocalConfig{
+		Version: "2",
+		Tools:   map[string][]string{"kiro": {identity1, identity2}},
+	}
+
+	// Create first symlink
+	wasCreated, err := CreateSkillSymlink(identity1, "kiro", localCfg)
+	if err != nil {
+		t.Fatalf("first CreateSkillSymlink error: %v", err)
+	}
+	if !wasCreated {
+		t.Error("first call: expected wasCreated=true")
+	}
+
+	// Try to create second symlink with same short name — should conflict
+	wasCreated, err = CreateSkillSymlink(identity2, "kiro", localCfg)
+	if err == nil {
+		t.Fatal("expected conflict error, got nil")
+	}
+	if wasCreated {
+		t.Error("expected wasCreated=false on conflict")
+	}
+
+	// Error should mention "symlink conflict"
+	if !contains(err.Error(), "symlink conflict") {
+		t.Errorf("error should mention 'symlink conflict', got: %v", err)
+	}
+}
+
+func TestCreateSkillSymlink_GlobalPathNotFound(t *testing.T) {
+	// Set up global store (empty — no skills)
+	globalStore := t.TempDir()
+	overrideSkillsDir(t, globalStore)
+
+	// Set up project directory as cwd
+	projectDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	// Set up global config
+	setupGlobalConfig(t, map[string]string{"kiro": ".kiro/skills"})
+
+	// Try to create symlink for a skill that doesn't exist in global store
+	identity := "github.com/anthropics/skills/skills/nonexistent"
+	localCfg := config.LocalConfig{
+		Version: "2",
+		Tools:   map[string][]string{"kiro": {identity}},
+	}
+
+	wasCreated, err := CreateSkillSymlink(identity, "kiro", localCfg)
+	if err == nil {
+		t.Fatal("expected error for missing global skill, got nil")
+	}
+	if wasCreated {
+		t.Error("expected wasCreated=false when skill not found")
+	}
+
+	// Error should mention "skill not found in global store"
+	if !contains(err.Error(), "skill not found in global store") {
+		t.Errorf("error should mention 'skill not found in global store', got: %v", err)
+	}
+}
+
+// contains checks if s contains substr
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstring(s, substr))
+}
+
+func containsSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

@@ -153,6 +153,81 @@ func FindAllSkillLinks(skillName string) ([]string, error) {
 	return linkedAgentics, nil
 }
 
+// GetToolSkillsDir returns the absolute path to a tool's skills directory in the current project.
+// It reads the tool's relative path from global config and joins it with cwd.
+func GetToolSkillsDir(tool string) (string, error) {
+	relPath, err := config.GetAgenticPath(tool)
+	if err != nil {
+		return "", fmt.Errorf("unknown tool: %s", tool)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get working directory: %w", err)
+	}
+	return filepath.Join(cwd, relPath), nil
+}
+
+// CreateSkillSymlink creates a symlink for a full-path skill identity in the given tool's skills directory.
+// It uses the custom symlink name from localConfig.SymlinkNames if available, otherwise falls back to the
+// short name (final path component). Returns wasCreated=true only when a new symlink is created.
+// Returns wasCreated=false, nil for idempotent no-ops (symlink already points to correct target).
+func CreateSkillSymlink(identity, tool string, localConfig config.LocalConfig) (bool, error) {
+	// 1. Parse identity
+	parsed, err := skills.ParseIdentity(identity)
+	if err != nil {
+		return false, fmt.Errorf("invalid identity: %w", err)
+	}
+
+	// 2. Determine symlink name
+	symlinkName := localConfig.SymlinkNames[identity]
+	if symlinkName == "" {
+		symlinkName = parsed.ShortName
+	}
+
+	// 3. Construct paths
+	globalPath := filepath.Join(config.SkillsDir, filepath.FromSlash(identity))
+
+	toolDir, err := GetToolSkillsDir(tool)
+	if err != nil {
+		return false, err
+	}
+	symlinkPath := filepath.Join(toolDir, symlinkName)
+
+	// 4. Verify global skill exists (must contain SKILL.md)
+	skillMdPath := filepath.Join(globalPath, "SKILL.md")
+	if _, err := os.Stat(skillMdPath); err != nil {
+		return false, fmt.Errorf("skill not found in global store: %s", identity)
+	}
+
+	// 5. Ensure tool skills directory exists
+	if err := os.MkdirAll(toolDir, 0755); err != nil {
+		return false, fmt.Errorf("failed to create tool skills directory: %w", err)
+	}
+
+	// 6. Check for conflicts
+	if info, err := os.Lstat(symlinkPath); err == nil {
+		// Something exists at the symlink path
+		if info.Mode()&os.ModeSymlink != 0 {
+			existingTarget, err := os.Readlink(symlinkPath)
+			if err != nil {
+				return false, fmt.Errorf("failed to read existing symlink: %w", err)
+			}
+			if existingTarget == globalPath {
+				return false, nil // Already linked correctly (idempotent)
+			}
+			return false, fmt.Errorf("symlink conflict: %s already points to %s", symlinkName, existingTarget)
+		}
+		return false, fmt.Errorf("symlink conflict: %s already exists and is not a symlink", symlinkName)
+	}
+
+	// 7. Create symlink
+	if err := os.Symlink(globalPath, symlinkPath); err != nil {
+		return false, fmt.Errorf("failed to create symlink: %w", err)
+	}
+
+	return true, nil
+}
+
 func FindSkillPath(skillName string) (string, error) {
 	skillsDir := config.SkillsDir
 
